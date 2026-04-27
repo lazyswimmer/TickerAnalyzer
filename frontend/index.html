@@ -1,1 +1,42 @@
 
+<!DOCTYPE html><html>
+<head>
+    <title>Macro Risk Analyzer</title>
+</head>
+<body>
+<h1>Macro Risk Analyzer</h1>
+
+
+<p>Enter a stock ticker:</p>
+<input type="text" id="stockInput" placeholder="e.g. AAPL">
+
+
+<button onclick="calculateRisk()">Calculate Risk</button>
+
+
+<h2 id="result"></h2>
+
+
+<script>
+    function calculateRisk() {
+        let stock = document.getElementById("stockInput").value.toUpperCase();
+        let riskScore;
+
+
+        // VERY simple placeholder logic
+        if (stock === "AAPL") {
+            riskScore = 7;
+        } else if (stock === "TSLA") {
+            riskScore = 5;
+        } else {
+            riskScore = 6; // default
+        }
+
+
+        document.getElementById("result").innerText = 
+            "Risk Score for " + stock + ": " + riskScore;
+    }
+</script>
+
+</body>
+</html>
