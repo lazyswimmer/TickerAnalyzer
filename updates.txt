@@ -1,0 +1,734 @@
+app.py
+
+Replace your Flask setup with this version:
+
+from flask import Flask, jsonify, request, render_template
+from extraTrashTester import get_stock_assessment_for_html
+
+app = Flask(__name__, template_folder=".")
+
+
+@app.after_request
+def add_local_dev_headers(response):
+    """
+    Allow the HTML page to call the API during local MVP testing.
+
+    Recommended path:
+        python app.py
+        http://127.0.0.1:5000/
+    """
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+
+@app.route("/api/health")
+def api_health():
+    return jsonify({
+        "success": True,
+        "status": "ok"
+    })
+
+
+@app.route("/api/assessment")
+def api_assessment():
+    ticker = request.args.get("ticker", "").upper().strip()
+
+    if not ticker:
+        return jsonify({
+            "success": False,
+            "error": "Please enter a ticker."
+        }), 400
+
+    try:
+        result = get_stock_assessment_for_html(ticker)
+        return jsonify(result)
+
+    except Exception as exc:
+        return jsonify({
+            "success": False,
+            "ticker": ticker,
+            "error": str(exc)
+        }), 500
+
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=5000, debug=True)
+extraTrashTester.py
+
+Add this import near the top:
+
+import re
+
+Add this ticker validation helper near your helper utilities:
+
+def validate_ticker_exists(ticker: str) -> Dict[str, Any]:
+    """
+    Fast guard for the web API.
+
+    It catches obvious bad input before running the expensive full assessment,
+    then asks Yahoo Finance for recent trading history. For this MVP, a ticker
+    is treated as valid only if Yahoo returns recent price rows.
+    """
+    ticker = str(ticker or "").upper().strip()
+
+    if not ticker:
+        return {
+            "exists": False,
+            "error": "Please enter a ticker."
+        }
+
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9.\-]{0,14}", ticker):
+        return {
+            "exists": False,
+            "error": "Ticker format looks invalid. Use symbols like AAPL, MSFT, BRK-B, or BRK.B.",
+        }
+
+    try:
+        stock = yf.Ticker(ticker)
+        recent_history = stock.history(period="1mo", auto_adjust=False)
+
+        if recent_history is None or recent_history.empty:
+            return {
+                "exists": False,
+                "error": f"I could not find recent market data for '{ticker}'. Please check the ticker symbol.",
+            }
+
+        return {
+            "exists": True,
+            "ticker": ticker
+        }
+
+    except Exception as exc:
+        return {
+            "exists": False,
+            "error": f"Could not validate ticker '{ticker}': {exc}",
+        }
+
+Add these story/report helpers near your existing summary functions:
+
+def plain_score_label(score):
+    """Simple user-facing score label for the story report."""
+    if score is None:
+        return "Unknown"
+
+    try:
+        score = float(score)
+    except Exception:
+        return "Unknown"
+
+    if score >= 7.5:
+        return "Strong"
+    if score >= 6:
+        return "Healthy"
+    if score >= 4.5:
+        return "Mixed"
+
+    return "Weak"
+
+
+def split_strengths_and_risks(summary):
+    """
+    Turn category scores and notes into a small set of human-readable strengths
+    and risks. This keeps the UI focused on the few signals that matter most.
+    """
+    scores = summary.get("category_scores", {}) or {}
+    notes = summary.get("notes", {}) or {}
+
+    strengths = []
+    risks = []
+
+    for category, score in scores.items():
+        category_notes = notes.get(category, []) or []
+        first_note = category_notes[0] if category_notes else "Available data is limited."
+
+        if isinstance(score, (int, float)) and score >= 6.5:
+            strengths.append({
+                "title": category,
+                "signal": plain_score_label(score),
+                "score": score,
+                "explanation": first_note,
+            })
+
+        elif isinstance(score, (int, float)) and score <= 5.0:
+            risks.append({
+                "title": category,
+                "signal": plain_score_label(score),
+                "score": score,
+                "explanation": first_note,
+            })
+
+    strengths = sorted(
+        strengths,
+        key=lambda x: x.get("score", 0),
+        reverse=True
+    )[:3]
+
+    risks = sorted(
+        risks,
+        key=lambda x: x.get("score", 10)
+    )[:3]
+
+    if not risks:
+        risks.append({
+            "title": "No single category dominates the risk picture",
+            "signal": "Watch",
+            "score": None,
+            "explanation": "The screen did not find one obvious weak area, but this should still be checked against filings, earnings updates, and company-specific news.",
+        })
+
+    if not strengths:
+        strengths.append({
+            "title": "No clear standout strength",
+            "signal": "Mixed",
+            "score": None,
+            "explanation": "The available data does not show a category that clearly offsets the main risks.",
+        })
+
+    return strengths, risks
+def build_highlighted_signals(summary):
+    """Create a compact signal strip for the top of the report."""
+    scores = summary.get("category_scores", {}) or {}
+
+    numeric_scores = {
+        k: v for k, v in scores.items()
+        if isinstance(v, (int, float))
+    }
+
+    strongest = max(numeric_scores, key=numeric_scores.get) if numeric_scores else None
+    weakest = min(numeric_scores, key=numeric_scores.get) if numeric_scores else None
+
+    signals = [
+        {
+            "label": "Risk level",
+            "value": summary.get("risk_label", "Unknown"),
+            "tone": "risk",
+            "description": f"General risk score: {summary.get('generalized_risk_score', 'N/A')}/10",
+        },
+        {
+            "label": "Overall profile",
+            "value": plain_score_label(summary.get("overall_quality_score")),
+            "tone": "quality",
+            "description": f"Quality score: {summary.get('overall_quality_score', 'N/A')}/10",
+        },
+    ]
+
+    if strongest:
+        signals.append({
+            "label": "Best signal",
+            "value": strongest,
+            "tone": "positive",
+            "description": f"{plain_score_label(scores.get(strongest))}: {scores.get(strongest)}/10",
+        })
+
+    if weakest:
+        signals.append({
+            "label": "Main watch area",
+            "value": weakest,
+            "tone": "warning",
+            "description": f"{plain_score_label(scores.get(weakest))}: {scores.get(weakest)}/10",
+        })
+
+    return signals
+def build_simple_metric_snapshot(summary):
+    """
+    Keep only a short, plain-English financial health overview.
+    The detailed metric table is still returned for future use, but the main UI
+    should lead with this smaller set.
+    """
+    metrics = summary.get("metric_snapshot", {}) or {}
+
+    keep = [
+        "Company",
+        "Sector",
+        "Market Cap",
+        "Revenue Growth",
+        "Operating Margin",
+        "FCF Margin",
+        "Net Debt / EBITDA",
+        "Interest Coverage",
+        "Current Drawdown",
+    ]
+
+    return {
+        k: metrics.get(k)
+        for k in keep
+        if metrics.get(k) not in (None, "", "N/A")
+    }
+
+
+def build_financial_health_overview(summary):
+    scores = summary.get("category_scores", {}) or {}
+    metrics = summary.get("metric_snapshot", {}) or {}
+
+    balance = plain_score_label(scores.get("Balance Sheet")).lower()
+    earnings = plain_score_label(scores.get("Earnings Quality")).lower()
+    growth = plain_score_label(scores.get("Growth / Profitability")).lower()
+
+    parts = [
+        f"Balance sheet: {balance}.",
+        f"Earnings quality: {earnings}.",
+        f"Growth and profitability: {growth}.",
+    ]
+
+    metric_clues = []
+
+    for label in [
+        "Revenue Growth",
+        "Operating Margin",
+        "FCF Margin",
+        "Net Debt / EBITDA",
+    ]:
+        value = metrics.get(label)
+
+        if value not in (None, "", "N/A"):
+            metric_clues.append(f"{label}: {value}")
+
+    return {
+        "summary": " ".join(parts),
+        "supporting_points": metric_clues[:4],
+    }
+def build_story_report(summary):
+    """
+    A top-level narrative layer for the MVP UI. It reads like an analyst brief:
+    what the stock looks like, what could go wrong, what is working, and what
+    financial-health signals deserve attention.
+    """
+    strengths, risks = split_strengths_and_risks(summary)
+
+    ticker = summary.get("ticker", "This stock")
+    risk_label = summary.get("risk_label", "Unknown")
+    verdict = summary.get("verdict", "Mixed / needs deeper research")
+
+    overall_risk_text = (
+        f"{ticker} currently screens as {risk_label.lower()} risk. "
+        f"The overall verdict is {verdict.lower()}, so the first question is not simply "
+        "whether the company is good or bad, but whether the strongest signals are enough "
+        "to offset the main watch areas."
+    )
+
+    return {
+        "top_level_summary": build_key_takeaway(summary),
+        "overall_risk": {
+            "headline": f"{risk_label} risk, {plain_score_label(summary.get('overall_quality_score')).lower()} overall profile",
+            "body": overall_risk_text,
+        },
+        "highlighted_signals": build_highlighted_signals(summary),
+        "key_risks": risks,
+        "key_strengths": strengths,
+        "financial_health_overview": build_financial_health_overview(summary),
+        "simple_metrics": build_simple_metric_snapshot(summary),
+        "plain_english_note": (
+            "This report is intentionally simplified. It highlights the main signals first "
+            "and keeps detailed ratios in the background so the MVP reads like a decision "
+            "brief rather than a data dump."
+        ),
+    }
+
+Update get_stock_assessment_for_html() to validate the ticker and return the story report:
+
+def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
+    """
+    Runs the full stock assessment and returns the same information that
+    print_concise_scored_summary() prints, but as a dictionary for HTML/API use.
+    """
+    validation = validate_ticker_exists(ticker)
+
+    if not validation.get("exists"):
+        return make_json_safe({
+            "success": False,
+            "ticker": str(ticker or "").upper().strip(),
+            "error": validation.get("error", "Ticker was not found."),
+        })
+
+    ticker = validation["ticker"]
+
+    assessment = comprehensive_stock_assessment(ticker)
+    summary = generate_scored_summary(assessment)
+
+    key_takeaway = build_key_takeaway(summary)
+    category_interpretations = build_category_interpretations(summary)
+    story_report = build_story_report(summary)
+
+    return make_json_safe({
+        "success": True,
+        "ticker": summary["ticker"],
+        "verdict": summary["verdict"],
+        "overall_quality_score": summary["overall_quality_score"],
+        "generalized_risk_score": summary["generalized_risk_score"],
+        "risk_label": summary["risk_label"],
+        "key_takeaway": key_takeaway,
+        "story_report": story_report,
+        "metric_snapshot": summary["metric_snapshot"],
+        "simple_metrics": story_report["simple_metrics"],
+        "category_scores": summary["category_scores"],
+        "summary_notes": summary["notes"],
+        "category_interpretations": category_interpretations,
+        "interpretation": (
+            "This is a generalized rule-based screen, not a buy/sell recommendation. "
+            "Use it to identify where deeper research is needed: valuation, balance sheet, "
+            "earnings quality, competitive position, or market risk."
+        ),
+    })
+index.html
+
+Add or replace the main report body with this structure:
+
+<h1>Stock Risk Story</h1>
+
+<p class="subtitle">
+    A simpler MVP report that starts with the big picture, then explains the risks,
+    strengths, and financial health signals.
+</p>
+
+<p>Enter a stock ticker:</p>
+
+<input type="text" id="stockInput" placeholder="e.g. AAPL">
+<button onclick="calculateRisk()">Build Report</button>
+
+<div id="status"></div>
+
+<div id="output" style="display: none;">
+
+    <div class="hero">
+        <h2 id="title"></h2>
+        <div class="verdict" id="verdict"></div>
+        <p id="topLevelSummary"></p>
+
+        <div class="signal-grid" id="highlightedSignals"></div>
+    </div>
+
+    <div class="section">
+        <h2>Overall Risk</h2>
+        <h3 id="overallRiskHeadline"></h3>
+        <p id="overallRiskBody"></p>
+
+        <div class="score-boxes">
+            <div class="score-box">
+                <div class="score-label">Overall Quality</div>
+                <div class="score-value" id="qualityScore"></div>
+            </div>
+
+            <div class="score-box">
+                <div class="score-label">Risk Score</div>
+                <div class="score-value" id="riskScore"></div>
+                <div id="riskLabel"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="section">
+        <h2>Key Risks</h2>
+        <p class="small-note">
+            These are the main watch areas the screen found. They are written as review prompts,
+            not final conclusions.
+        </p>
+        <div class="card-grid" id="keyRisks"></div>
+    </div>
+
+    <div class="section">
+        <h2>Key Strengths</h2>
+        <p class="small-note">
+            These are the areas that currently help the company’s profile.
+        </p>
+        <div class="card-grid" id="keyStrengths"></div>
+    </div>
+
+    <div class="section">
+        <h2>Financial Health Overview</h2>
+        <p id="financialHealthSummary"></p>
+        <ul id="financialHealthPoints"></ul>
+    </div>
+
+    <div class="section">
+        <h2>Simple Signal Snapshot</h2>
+        <p class="small-note">
+            A short set of useful context points. The full model still calculates more detail
+            in the background.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Signal</th>
+                    <th>Value</th>
+                </tr>
+            </thead>
+            <tbody id="simpleMetricsTable"></tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>What Each Area Means</h2>
+        <div id="categoryInterpretations"></div>
+    </div>
+
+    <div class="section">
+        <h2>Category Scores</h2>
+        <p class="small-note">
+            Scores are included for transparency, but the report leads with the story instead
+            of the raw metrics.
+        </p>
+
+        <table>
+            <thead>
+                <tr>
+                    <th>Category</th>
+                    <th>Score</th>
+                </tr>
+            </thead>
+            <tbody id="categoryScoresTable"></tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Bottom Line</h2>
+        <p id="interpretation"></p>
+        <p class="small-note" id="plainEnglishNote"></p>
+    </div>
+
+</div>
+
+Add these fetch/error helper functions in your <script>:
+
+function getApiBaseUrl() {
+    // Best case: the page is served by Flask at http://127.0.0.1:5000/.
+    // Fallback: if opened as a file or from a static dev server, call Flask directly.
+    if (window.location.protocol === "file:" || window.location.port !== "5000") {
+        return "http://127.0.0.1:5000";
+    }
+
+    return "";
+}
+
+
+function explainFetchFailure(error) {
+    return (
+        "Could not reach the Flask API. " +
+        "Make sure the server is running with `python app.py`, then open `http://127.0.0.1:5000/`. " +
+        "If you are using VS Code Live Server or opening index.html directly, the page may be running from the wrong address. " +
+        "Browser error: " + error
+    );
+}
+
+Replace calculateRisk() with this:
+
+async function calculateRisk() {
+    const stock = document.getElementById("stockInput").value.toUpperCase().trim();
+
+    const status = document.getElementById("status");
+    const output = document.getElementById("output");
+
+    if (!stock) {
+        status.innerHTML = '<p class="error">Please enter a stock ticker.</p>';
+        output.style.display = "none";
+        return;
+    }
+
+    status.innerHTML = '<p class="loading">Building a plain-English report for ' + stock + '...</p>';
+    output.style.display = "none";
+
+    try {
+        const apiBaseUrl = getApiBaseUrl();
+
+        const response = await fetch(
+            apiBaseUrl + "/api/assessment?ticker=" + encodeURIComponent(stock)
+        );
+
+        const rawResponse = await response.text();
+
+        let data;
+
+        try {
+            data = JSON.parse(rawResponse);
+        } catch (parseError) {
+            throw new Error(
+                "The server returned HTML instead of JSON. Make sure you are running the Flask app with `python app.py` and opening http://127.0.0.1:5000/. Server response starts with: " +
+                rawResponse.slice(0, 80)
+            );
+        }
+
+        if (!response.ok || !data.success) {
+            status.innerHTML = '<p class="error">' + escapeHtml(data.error || "Assessment failed.") + '</p>';
+            return;
+        }
+
+        renderAssessment(data);
+
+        status.innerHTML = "";
+        output.style.display = "block";
+
+    } catch (error) {
+        status.innerHTML = '<p class="error">' + escapeHtml(explainFetchFailure(error)) + '</p>';
+    }
+}
+
+Add or replace the render functions with these:
+
+function renderAssessment(data) {
+    const story = data.story_report || {};
+
+    document.getElementById("title").innerText =
+        data.ticker + " Stock Assessment";
+
+    document.getElementById("verdict").innerText =
+        "Verdict: " + data.verdict;
+
+    document.getElementById("topLevelSummary").innerText =
+        story.top_level_summary || data.key_takeaway || "No summary available.";
+
+    document.getElementById("qualityScore").innerText =
+        data.overall_quality_score + "/10";
+
+    document.getElementById("riskScore").innerText =
+        data.generalized_risk_score + "/10";
+
+    document.getElementById("riskLabel").innerText =
+        data.risk_label + " Risk";
+
+    const overallRisk = story.overall_risk || {};
+
+    document.getElementById("overallRiskHeadline").innerText =
+        overallRisk.headline || data.risk_label + " risk";
+
+    document.getElementById("overallRiskBody").innerText =
+        overallRisk.body || data.interpretation;
+
+    renderHighlightedSignals(story.highlighted_signals || []);
+    renderStoryCards("keyRisks", story.key_risks || []);
+    renderStoryCards("keyStrengths", story.key_strengths || []);
+    renderFinancialHealth(story.financial_health_overview || {});
+    renderSimpleMetrics(story.simple_metrics || data.simple_metrics || {});
+    renderCategoryInterpretations(data.category_interpretations || {});
+    renderCategoryScores(data.category_scores || {});
+
+    document.getElementById("interpretation").innerText =
+        data.interpretation;
+
+    document.getElementById("plainEnglishNote").innerText =
+        story.plain_english_note || "";
+}
+function renderHighlightedSignals(signals) {
+    const container = document.getElementById("highlightedSignals");
+    container.innerHTML = "";
+
+    signals.forEach(signal => {
+        const card = document.createElement("div");
+        card.className = "signal-card";
+
+        card.innerHTML = `
+            <div class="signal-label">${escapeHtml(signal.label || "Signal")}</div>
+            <div class="signal-value">${escapeHtml(signal.value || "N/A")}</div>
+            <div class="signal-description">${escapeHtml(signal.description || "")}</div>
+        `;
+
+        container.appendChild(card);
+    });
+}
+
+
+function renderStoryCards(containerId, items) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = "";
+
+    items.forEach(item => {
+        const scoreText =
+            item.score === null || item.score === undefined
+                ? ""
+                : ` · ${item.score}/10`;
+
+        const card = document.createElement("div");
+        card.className = "story-card";
+
+        card.innerHTML = `
+            <div class="card-label">${escapeHtml(item.signal || "Signal")}${escapeHtml(scoreText)}</div>
+            <h3>${escapeHtml(item.title || "Untitled")}</h3>
+            <p>${escapeHtml(item.explanation || "No explanation available.")}</p>
+        `;
+
+        container.appendChild(card);
+    });
+}
+function renderFinancialHealth(financialHealth) {
+    document.getElementById("financialHealthSummary").innerText =
+        financialHealth.summary || "Financial-health summary is unavailable.";
+
+    const list = document.getElementById("financialHealthPoints");
+    list.innerHTML = "";
+
+    (financialHealth.supporting_points || []).forEach(point => {
+        const item = document.createElement("li");
+        item.innerText = point;
+        list.appendChild(item);
+    });
+}
+
+
+function renderSimpleMetrics(metrics) {
+    const table = document.getElementById("simpleMetricsTable");
+    table.innerHTML = "";
+
+    Object.entries(metrics).forEach(([key, value]) => {
+        if (value !== null && value !== undefined && value !== "") {
+            const row = document.createElement("tr");
+
+            row.innerHTML = `
+                <td>${escapeHtml(key)}</td>
+                <td>${escapeHtml(value)}</td>
+            `;
+
+            table.appendChild(row);
+        }
+    });
+}
+
+
+function renderCategoryInterpretations(categoryInterpretations) {
+    const interpretationBox = document.getElementById("categoryInterpretations");
+    interpretationBox.innerHTML = "";
+
+    Object.entries(categoryInterpretations).forEach(([category, explanation]) => {
+        const item = document.createElement("p");
+
+        item.innerHTML = `
+            <strong>${escapeHtml(category)}:</strong> ${escapeHtml(explanation)}
+        `;
+
+        interpretationBox.appendChild(item);
+    });
+}
+
+
+function renderCategoryScores(categoryScores) {
+    const table = document.getElementById("categoryScoresTable");
+    table.innerHTML = "";
+
+    Object.entries(categoryScores).forEach(([category, score]) => {
+        const row = document.createElement("tr");
+        const scoreText = score === null ? "N/A" : score + "/10";
+
+        row.innerHTML = `
+            <td>${escapeHtml(category)}</td>
+            <td>${escapeHtml(scoreText)}</td>
+        `;
+
+        table.appendChild(row);
+    });
+}
+
+Add this escaping helper:
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}

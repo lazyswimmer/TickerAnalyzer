@@ -1,0 +1,77 @@
+{
+  "success": true,
+  "ticker": "AAPL",
+  "summary": {
+    "ticker": "AAPL",
+    "verdict": "Generally solid, but not risk-free",
+    "overall_quality_score": 6.6,
+    "generalized_risk_score": 4.4,
+    "risk_label": "Moderate",
+    "category_scores": {
+      "Valuation": 4,
+      "Growth / Profitability": 10,
+      "Balance Sheet": 7,
+      "Earnings Quality": 5,
+      "Market / Technical": 5,
+      "Governance": 8.6
+    },
+    "metric_snapshot": {
+      "Company": "Apple Inc.",
+      "Sector": "Technology",
+      "Industry": "Consumer Electronics",
+      "Market Cap": "$3.98T",
+      "Forward P/E": "28.98",
+      "Trailing P/E": "34.35",
+      "EV/EBITDA": "26.18",
+      "Price/Sales": "9.14",
+      "Revenue Growth": "15.7%",
+      "Earnings Growth": "18.3%",
+      "Operating Margin": "35.4%",
+      "Gross Margin": "47.3%",
+      "FCF Margin": "23.7%",
+      "Net Debt / EBITDA": "0.15",
+      "Current Ratio": "0.97",
+      "Interest Coverage": "33.83",
+      "CAGR": "19.1%",
+      "Annualized Volatility": "43.8%",
+      "Max Drawdown": "-81.8%",
+      "Current RSI": "62.01",
+      "Current Drawdown": "-5.3%",
+      "Analyst Mean Target": "$298",
+      "Analyst Rating": "buy"
+    },
+    "notes": {
+      "Valuation": [
+        "PEG ratio suggests valuation may be high relative to growth."
+      ],
+      "Growth / Profitability": [
+        "Revenue growth is strong.",
+        "Earnings growth is strong.",
+        "Operating margin is strong.",
+        "Return on equity is attractive."
+      ],
+      "Balance Sheet": [
+        "Leverage appears low relative to EBITDA.",
+        "Current ratio below 1 may indicate liquidity pressure.",
+        "Strong interest coverage reduces credit risk."
+      ],
+      "Earnings Quality": [
+        "Free cash flow margin is healthy.",
+        "Net margin is strong.",
+        "Operating cash flow is below net income.",
+        "Operating cash flow is below net income",
+        "Inventory exists and should be checked for buildup"
+      ],
+      "Market / Technical": [
+        "Price is above its 200-day average.",
+        "MACD trend is positive.",
+        "Historical max drawdown has been severe.",
+        "Historical volatility is elevated."
+      ],
+      "Governance": [
+        "Average available governance risk score is 2.4/10.",
+        "Governance risk appears relatively low."
+      ]
+    }
+  }
+}

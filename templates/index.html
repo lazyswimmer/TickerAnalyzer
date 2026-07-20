@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Macro Risk Analyzer</title>
+
+    <style>
+        :root {
+            --bg: #f6f7f9;
+            --card: #ffffff;
+            --ink: #1c2024;
+            --muted: #5b636b;
+            --line: #e4e7eb;
+            --accent: #2563eb;
+            --green: #1a9d6a;
+            --amber: #d98a00;
+            --red: #d6453d;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+            color: var(--ink);
+            background: var(--bg);
+            max-width: 880px;
+            margin: 0 auto;
+            padding: 32px 20px 64px;
+            line-height: 1.55;
+        }
+
+        h1 { font-size: 26px; margin: 0 0 4px; }
+        .subtitle { color: var(--muted); margin: 0 0 24px; }
+
+        /* ---- Search bar ---- */
+        .search {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .search input {
+            flex: 1 1 240px;
+            padding: 12px 14px;
+            font-size: 16px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        .search button {
+            padding: 12px 22px;
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+            background: var(--accent);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+        .search button:hover { background: #1d4fd7; }
+
+        #status { margin-top: 16px; }
+        .loading { color: var(--muted); font-style: italic; }
+        .error { color: var(--red); font-weight: 600; }
+
+        /* ---- Cards ---- */
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            padding: 22px 24px;
+            margin-top: 20px;
+        }
+
+        /* ---- Hero ---- */
+        .hero {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 28px;
+            flex-wrap: wrap;
+        }
+        .hero-left { flex: 1 1 240px; }
+        .hero h2 { font-size: 22px; margin: 0 0 6px; }
+        .hero .verdict { color: var(--muted); font-size: 16px; }
+
+        .risk-block { flex: 1 1 280px; min-width: 260px; }
+        .risk-top {
+            display: flex;
+            align-items: baseline;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        .risk-score {
+            font-size: 64px;
+            font-weight: 800;
+            line-height: 1;
+        }
+        .risk-outof { font-size: 22px; color: var(--muted); }
+        .risk-label {
+            text-align: right;
+            font-weight: 700;
+            font-size: 15px;
+            letter-spacing: .02em;
+            text-transform: uppercase;
+            margin-top: 6px;
+        }
+        .gauge {
+            height: 10px;
+            border-radius: 6px;
+            background: #edf0f3;
+            margin-top: 12px;
+            overflow: hidden;
+        }
+        .gauge > div { height: 100%; border-radius: 6px; }
+        .risk-caption { text-align: right; color: var(--muted); font-size: 13px; margin-top: 8px; }
+
+        /* risk color helpers (applied via JS) */
+        .lvl-low    { color: var(--green); }
+        .lvl-mod    { color: var(--amber); }
+        .lvl-high   { color: var(--red); }
+        .bg-low  { background: var(--green); }
+        .bg-mod  { background: var(--amber); }
+        .bg-high { background: var(--red); }
+
+        /* ---- Takeaway callout ---- */
+        .takeaway {
+            border-left: 4px solid var(--accent);
+            background: #f0f5ff;
+            border-color: #d8e3fb;
+        }
+        .takeaway h3 { margin: 0 0 10px; font-size: 16px; }
+        .takeaway-list { margin: 0; padding-left: 20px; }
+        .takeaway-list li { font-size: 16px; margin-bottom: 8px; }
+        .takeaway-list li:last-child { margin-bottom: 0; }
+
+        /* plain-language helper line under a metric name */
+        .meaning { color: var(--muted); font-size: 13px; margin-top: 3px; max-width: 460px; }
+
+        /* ---- Risks & strengths ---- */
+        .columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-top: 20px;
+        }
+        @media (max-width: 620px) { .columns { grid-template-columns: 1fr; } }
+        .col h3 { margin: 0 0 12px; font-size: 16px; }
+        .col.risks  { border-top: 3px solid var(--red); }
+        .col.strengths { border-top: 3px solid var(--green); }
+        .item { margin-bottom: 14px; }
+        .item:last-child { margin-bottom: 0; }
+        .item .t { font-weight: 600; }
+        .item .d { color: var(--muted); font-size: 14px; }
+
+        /* ---- Accordions ---- */
+        details {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            margin-top: 12px;
+            padding: 0 24px;
+        }
+        details > summary {
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 16px;
+            padding: 18px 0;
+            list-style: none;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        details > summary::-webkit-details-marker { display: none; }
+        details > summary::after { content: "+"; color: var(--muted); font-size: 20px; }
+        details[open] > summary::after { content: "\2212"; }
+        .details-body { padding: 0 0 20px; }
+
+        table { border-collapse: collapse; width: 100%; }
+        th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); font-size: 14px; }
+        th { color: var(--muted); font-weight: 600; }
+        td:first-child, th:first-child { padding-left: 0; }
+
+        .cat-row { padding: 14px 0; border-bottom: 1px solid var(--line); }
+        .cat-row:last-child { border-bottom: none; }
+        .cat-head { display: flex; justify-content: space-between; align-items: baseline; }
+        .cat-name { font-weight: 600; }
+        .cat-score { font-weight: 700; }
+        .cat-desc { color: var(--muted); font-size: 14px; margin-top: 4px; }
+        .cat-notes { margin: 8px 0 0 18px; padding: 0; font-size: 14px; color: var(--muted); }
+
+        .peers-used { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+        .macro-regime {
+            background: #f2f6fb;
+            border: 1px solid #d6e2f0;
+            border-radius: 8px;
+            padding: 10px 12px;
+            margin: 0 0 12px;
+        }
+
+        .disclaimer { color: var(--muted); font-size: 13px; margin-top: 24px; }
+
+        /* ---- Browser-extension promo ---- */
+        .ext-promo {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
+            background: #f0f5ff;
+            border: 1px solid #d8e3fb;
+            border-radius: 10px;
+            padding: 12px 16px;
+            margin: 0 0 24px;
+            font-size: 14px;
+        }
+        .ext-promo .ext-text { color: var(--ink); }
+        .ext-promo .ext-text span { color: var(--muted); }
+        .ext-promo a {
+            white-space: nowrap;
+            font-weight: 600;
+            color: #fff;
+            background: var(--accent);
+            padding: 8px 14px;
+            border-radius: 7px;
+            text-decoration: none;
+        }
+        .ext-promo a:hover { background: #1d4fd7; }
+    </style>
+</head>
+
+<body>
+
+<h1>Macro Risk Analyzer</h1>
+<p class="subtitle">Enter a stock ticker to get a risk score and a plain-English read on what it means.</p>
+
+<!-- Cross-reference: the lightweight browser extension. Replace href with your
+     Chrome Web Store listing once published. -->
+<div class="ext-promo">
+    <div class="ext-text">Analyze tickers as you browse —
+        <span>get the free Macro Risk Analyzer Lite browser extension for instant in-page scores.</span>
+    </div>
+    <a href="https://chrome.google.com/webstore/detail/your-extension-id" target="_blank" rel="noopener">Get the extension</a>
+</div>
+
+<div class="search">
+    <input type="text" id="stockInput" placeholder="e.g. AAPL" autofocus>
+    <button onclick="calculateRisk()">Analyze</button>
+</div>
+
+<div id="status"></div>
+
+<div id="output" style="display: none;">
+
+    <!-- A. Hero: risk score is the focal point -->
+    <div class="card hero">
+        <div class="hero-left">
+            <h2 id="title"></h2>
+            <div class="verdict" id="verdict"></div>
+        </div>
+        <div class="risk-block">
+            <div class="risk-top">
+                <span class="risk-score" id="riskScore"></span>
+                <span class="risk-outof">/10</span>
+            </div>
+            <div class="risk-label" id="riskLabel"></div>
+            <div class="gauge"><div id="gaugeFill"></div></div>
+            <div class="risk-caption" id="qualityCaption"></div>
+        </div>
+    </div>
+
+    <!-- Key user takeaway: what this means for you -->
+    <div class="card takeaway">
+        <h3>What this means for you</h3>
+        <ul id="investorFit" class="takeaway-list"></ul>
+    </div>
+
+    <!-- B. Key risks & strengths, side by side -->
+    <div class="columns">
+        <div class="card col strengths">
+            <h3>Key strengths</h3>
+            <div id="strengthsList"></div>
+        </div>
+        <div class="card col risks">
+            <h3>Key risks</h3>
+            <div id="risksList"></div>
+        </div>
+    </div>
+
+    <!-- C/D. Detail, tucked away in accordions -->
+    <details>
+        <summary>Category breakdown</summary>
+        <div class="details-body" id="categoryBreakdown"></div>
+    </details>
+
+    <details>
+        <summary>Valuation vs. peers</summary>
+        <div class="details-body">
+            <p class="peers-used" id="peersUsed"></p>
+            <table>
+                <thead>
+                    <tr><th>Metric</th><th>This stock</th><th>Peer median</th><th>vs. peers</th></tr>
+                </thead>
+                <tbody id="peerComparisonTable"></tbody>
+            </table>
+        </div>
+    </details>
+
+    <details>
+        <summary>Macro context</summary>
+        <div class="details-body">
+            <p class="macro-regime" id="macroRegime"></p>
+            <div id="macroNotes"></div>
+        </div>
+    </details>
+
+    <details>
+        <summary>Key metrics</summary>
+        <div class="details-body">
+            <table><tbody id="metricsTable"></tbody></table>
+        </div>
+    </details>
+
+    <p class="disclaimer" id="disclaimer"></p>
+</div>
+
+<script>
+    async function calculateRisk() {
+        const stock = document.getElementById("stockInput").value.toUpperCase().trim();
+        const status = document.getElementById("status");
+        const output = document.getElementById("output");
+
+        if (!stock) {
+            status.innerHTML = '<p class="error">Please enter a stock ticker.</p>';
+            output.style.display = "none";
+            return;
+        }
+
+        output.style.display = "none";
+
+        // The first (cold) request can take ~30s while the macro/peer caches fill,
+        // and the connection sometimes drops before it finishes ("Failed to fetch").
+        // That's a transient network hiccup, not a real error — and the request is a
+        // read, so it's safe to just try again. We retry a few times automatically;
+        // the retry usually hits warm caches and succeeds quickly.
+        const maxAttempts = 3;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            status.innerHTML = '<p class="loading">' + (attempt === 1
+                ? 'Analyzing ' + stock + '… this can take a moment.'
+                : 'Connection dropped — retrying ' + stock + ' (attempt ' + attempt + ' of ' + maxAttempts + ')…')
+                + '</p>';
+
+            try {
+                const response = await fetch("/api/assessment?ticker=" + encodeURIComponent(stock));
+                const data = await response.json();
+
+                if (!data.success) {
+                    // A real, server-reported problem (e.g. unknown ticker) — don't retry.
+                    status.innerHTML = '<p class="error">' + (data.error || "Something went wrong.") + '</p>';
+                    return;
+                }
+
+                renderAssessment(data);
+                status.innerHTML = "";
+                output.style.display = "block";
+                output.scrollIntoView({ behavior: "smooth", block: "start" });
+                return;
+
+            } catch (error) {
+                // Network-level failure. Retry after a short pause unless we're out of attempts.
+                if (attempt < maxAttempts) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    continue;
+                }
+                status.innerHTML = '<p class="error">Could not reach the analyzer after ' + maxAttempts +
+                    ' attempts. Make sure the server is running, then try again.</p>';
+            }
+        }
+    }
+
+    // Allow Enter key to submit.
+    document.getElementById("stockInput").addEventListener("keydown", function (e) {
+        if (e.key === "Enter") calculateRisk();
+    });
+
+    function riskLevel(score) {
+        if (score <= 3) return "low";
+        if (score <= 6) return "mod";
+        return "high";
+    }
+
+    let GLOSSARY = {};
+
+    function renderTakeaway(data) {
+        const box = document.getElementById("investorFit");
+        box.innerHTML = "";
+        let bullets = data.investor_fit;
+        if (!bullets) bullets = data.key_takeaway ? [data.key_takeaway] : [];
+        if (typeof bullets === "string") bullets = [bullets];
+        bullets.forEach(text => {
+            const li = document.createElement("li");
+            li.innerText = text;
+            box.appendChild(li);
+        });
+    }
+
+    // Build a metric-name cell with an optional plain-language helper line under it.
+    function metricCell(name) {
+        const td = document.createElement("td");
+        const label = document.createElement("div");
+        label.innerText = name;
+        td.appendChild(label);
+        if (GLOSSARY[name]) {
+            const meaning = document.createElement("div");
+            meaning.className = "meaning";
+            meaning.innerText = GLOSSARY[name];
+            td.appendChild(meaning);
+        }
+        return td;
+    }
+
+    function renderAssessment(data) {
+        const risk = data.generalized_risk_score;
+        const level = riskLevel(risk);
+
+        document.getElementById("title").innerText = data.ticker + " — Macro Risk Analysis";
+        document.getElementById("verdict").innerText = data.verdict;
+
+        const riskScore = document.getElementById("riskScore");
+        riskScore.innerText = risk;
+        riskScore.className = "risk-score lvl-" + level;
+
+        const riskLabel = document.getElementById("riskLabel");
+        riskLabel.innerText = data.risk_label + " risk";
+        riskLabel.className = "risk-label lvl-" + level;
+
+        const fill = document.getElementById("gaugeFill");
+        fill.style.width = (risk * 10) + "%";
+        fill.className = "bg-" + level;
+
+        document.getElementById("qualityCaption").innerText =
+            "Overall quality score: " + data.overall_quality_score + "/10";
+
+        GLOSSARY = data.metric_glossary || {};
+        renderTakeaway(data);
+
+        renderItems("strengthsList", data.strengths, "No standout strengths identified.");
+        renderItems("risksList", data.risks, "No major risks flagged.");
+        renderCategoryBreakdown(data);
+        renderPeerComparison(data.peer_comparison);
+        renderMacroContext(data.macro_context);
+        renderMetrics(data.metric_snapshot);
+
+        document.getElementById("disclaimer").innerText = data.interpretation || "";
+    }
+
+    function renderItems(containerId, items, emptyMsg) {
+        const box = document.getElementById(containerId);
+        box.innerHTML = "";
+        if (!items || items.length === 0) {
+            box.innerHTML = '<div class="item"><div class="d">' + emptyMsg + '</div></div>';
+            return;
+        }
+        items.forEach(it => {
+            const div = document.createElement("div");
+            div.className = "item";
+            div.innerHTML = '<div class="t"></div><div class="d"></div>';
+            div.querySelector(".t").innerText = it.title;
+            div.querySelector(".d").innerText = it.detail;
+            box.appendChild(div);
+        });
+    }
+
+    function renderCategoryBreakdown(data) {
+        const box = document.getElementById("categoryBreakdown");
+        box.innerHTML = "";
+        const scores = data.category_scores || {};
+        const interp = data.category_interpretations || {};
+        const notes = data.summary_notes || {};
+
+        Object.entries(scores).forEach(([cat, score]) => {
+            const row = document.createElement("div");
+            row.className = "cat-row";
+
+            const head = document.createElement("div");
+            head.className = "cat-head";
+            const name = document.createElement("span");
+            name.className = "cat-name";
+            name.innerText = cat;
+            const sc = document.createElement("span");
+            sc.className = "cat-score";
+            sc.innerText = score === null ? "N/A" : score + "/10";
+            head.appendChild(name);
+            head.appendChild(sc);
+            row.appendChild(head);
+
+            if (interp[cat]) {
+                const desc = document.createElement("div");
+                desc.className = "cat-desc";
+                desc.innerText = interp[cat];
+                row.appendChild(desc);
+            }
+
+            const catNotes = (notes[cat] || []).slice(0, 3);
+            if (catNotes.length) {
+                const ul = document.createElement("ul");
+                ul.className = "cat-notes";
+                catNotes.forEach(n => {
+                    const li = document.createElement("li");
+                    li.innerText = n;
+                    ul.appendChild(li);
+                });
+                row.appendChild(ul);
+            }
+
+            box.appendChild(row);
+        });
+    }
+
+    function renderPeerComparison(peer) {
+        const table = document.getElementById("peerComparisonTable");
+        const peersUsed = document.getElementById("peersUsed");
+        table.innerHTML = "";
+
+        if (!peer || !peer.rows || peer.rows.length === 0) {
+            peersUsed.innerText = "Peer comparison unavailable for this stock.";
+            return;
+        }
+
+        peersUsed.innerText =
+            "Compared against " + peer.peers_used.length +
+            " industry peers: " + peer.peers_used.join(", ");
+
+        peer.rows.forEach(row => {
+            const tr = document.createElement("tr");
+            tr.appendChild(metricCell(row.metric));
+            [row.value, row.peer_median, row.vs_peers].forEach(text => {
+                const td = document.createElement("td");
+                td.innerText = text;
+                tr.appendChild(td);
+            });
+            table.appendChild(tr);
+        });
+    }
+
+    function renderMacroContext(macro) {
+        const regime = document.getElementById("macroRegime");
+        const notesBox = document.getElementById("macroNotes");
+        notesBox.innerHTML = "";
+
+        if (!macro) {
+            regime.innerText = "Macro context unavailable.";
+            return;
+        }
+
+        let regimeText = "Current regime: " + (macro.regime || "unavailable");
+        if (macro.risk_adjustment) {
+            regimeText += "  (risk +" + macro.risk_adjustment + " from macro)";
+        }
+        regime.innerText = regimeText;
+
+        const list = document.createElement("ul");
+        list.className = "cat-notes";
+        (macro.stock_specific_notes || []).forEach(note => {
+            const li = document.createElement("li");
+            li.innerText = note;
+            list.appendChild(li);
+        });
+        notesBox.appendChild(list);
+    }
+
+    function renderMetrics(metrics) {
+        const table = document.getElementById("metricsTable");
+        table.innerHTML = "";
+        for (const [key, value] of Object.entries(metrics || {})) {
+            if (value !== null && value !== undefined && value !== "" && value !== "N/A") {
+                const row = document.createElement("tr");
+                row.appendChild(metricCell(key));
+                const v = document.createElement("td");
+                v.innerText = value;
+                row.appendChild(v);
+                table.appendChild(row);
+            }
+        }
+    }
+</script>
+
+</body>
+</html>

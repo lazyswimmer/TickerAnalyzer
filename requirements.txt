@@ -1,0 +1,11 @@
+# Runtime deps for the analysis path used by the web app
+# (app.py -> extraTrashTester).
+flask
+numpy
+pandas
+requests
+yfinance
+financedatabase
+
+# Production WSGI server for hosting the website (not needed locally).
+gunicorn
