@@ -1,7 +1,21 @@
+import threading
+
 from flask import Flask, jsonify, request, render_template
-from extraTrashTester import get_stock_assessment_for_html
+from extraTrashTester import get_stock_assessment_for_html, get_macro_regime
 
 app = Flask(__name__)
+
+
+def _prewarm_macro_cache():
+    # get_macro_regime() is cached for hours but costs several seconds cold.
+    # Fetch it in the background at boot so the first visitor doesn't pay for it.
+    try:
+        get_macro_regime()
+    except Exception:
+        pass  # best-effort: the request path fetches it itself if this failed
+
+
+threading.Thread(target=_prewarm_macro_cache, daemon=True).start()
 
 @app.route("/")
 def home():

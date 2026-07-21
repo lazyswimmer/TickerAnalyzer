@@ -3,7 +3,13 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Macro Risk Analyzer</title>
+    <title>Macro Risk Analyzer — plain-English stock risk scores</title>
+
+    <meta name="description" content="Enter any stock ticker and get a 0–10 risk score with a plain-English read: key risks and strengths, peer comparison, and macro context.">
+    <meta property="og:title" content="Macro Risk Analyzer">
+    <meta property="og:description" content="Plain-English stock risk scores: peer comparison, macro context, and what it means for you.">
+    <meta property="og:type" content="website">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
 
     <style>
         :root {
@@ -61,6 +67,19 @@
         #status { margin-top: 16px; }
         .loading { color: var(--muted); font-style: italic; }
         .error { color: var(--red); font-weight: 600; }
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--line);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin .8s linear infinite;
+            margin-right: 9px;
+            vertical-align: -2px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .elapsed { font-variant-numeric: tabular-nums; font-style: normal; color: var(--muted); }
 
         /* ---- Cards ---- */
         .card {
@@ -225,13 +244,96 @@
             text-decoration: none;
         }
         .ext-promo a:hover { background: #1d4fd7; }
+
+        /* ---- Landing feature chips ---- */
+        .chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 0 0 20px;
+            padding: 0;
+            list-style: none;
+        }
+        .chips li {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 6px 14px;
+            font-size: 13px;
+            color: var(--muted);
+        }
+
+        /* ---- Saved analyses ---- */
+        .saved-head { display: flex; justify-content: space-between; align-items: baseline; }
+        .saved-head h3 { margin: 0 0 6px; font-size: 16px; }
+        .saved-hint { color: var(--muted); font-size: 13px; margin: 0 0 4px; }
+        .saved-item {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            flex-wrap: wrap;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--line);
+        }
+        .saved-item:last-child { border-bottom: none; }
+        .saved-score {
+            font-weight: 800;
+            font-size: 20px;
+            min-width: 58px;
+        }
+        .saved-score span { font-size: 13px; color: var(--muted); font-weight: 600; }
+        .saved-ticker { font-weight: 700; min-width: 70px; }
+        .saved-date { color: var(--muted); font-size: 13px; flex: 1 1 auto; }
+        .saved-item button {
+            border: 1px solid var(--line);
+            background: var(--card);
+            border-radius: 7px;
+            padding: 6px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--ink);
+        }
+        .saved-item button:hover { border-color: var(--accent); color: var(--accent); }
+        .saved-item button.danger:hover { border-color: var(--red); color: var(--red); }
+
+        .save-btn {
+            margin-top: 10px;
+            border: 1px solid var(--line);
+            background: var(--card);
+            border-radius: 8px;
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--ink);
+        }
+        .save-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .save-btn.saved { border-color: var(--green); color: var(--green); cursor: default; }
+
+        /* ---- Footer ---- */
+        .site-footer {
+            margin-top: 40px;
+            padding-top: 18px;
+            border-top: 1px solid var(--line);
+            color: var(--muted);
+            font-size: 13px;
+        }
     </style>
 </head>
 
 <body>
 
 <h1>Macro Risk Analyzer</h1>
-<p class="subtitle">Enter a stock ticker to get a risk score and a plain-English read on what it means.</p>
+<p class="subtitle">Type any stock ticker and get an in-depth risk read in plain English — no finance degree required.</p>
+
+<ul class="chips">
+    <li>0–10 risk score</li>
+    <li>Key risks &amp; strengths</li>
+    <li>Valuation vs. peers</li>
+    <li>Macro context</li>
+    <li>What it means for you</li>
+</ul>
 
 <!-- Cross-reference: the lightweight browser extension. Replace href with your
      Chrome Web Store listing once published. -->
@@ -249,6 +351,15 @@
 
 <div id="status"></div>
 
+<!-- Saved analyses (stored in this browser via localStorage — no account needed) -->
+<div id="savedSection" class="card" style="display: none;">
+    <div class="saved-head">
+        <h3>Saved analyses</h3>
+    </div>
+    <p class="saved-hint">Saved in this browser. Scores age — re-run before acting on one.</p>
+    <div id="savedList"></div>
+</div>
+
 <div id="output" style="display: none;">
 
     <!-- A. Hero: risk score is the focal point -->
@@ -256,6 +367,7 @@
         <div class="hero-left">
             <h2 id="title"></h2>
             <div class="verdict" id="verdict"></div>
+            <button id="saveBtn" class="save-btn" onclick="saveCurrentAnalysis()">&#9734; Save this analysis</button>
         </div>
         <div class="risk-block">
             <div class="risk-top">
@@ -323,6 +435,13 @@
     <p class="disclaimer" id="disclaimer"></p>
 </div>
 
+<footer class="site-footer">
+    <p>Macro Risk Analyzer is an automated research tool provided for informational and educational
+    purposes only. It is not investment advice, and its scores are not recommendations to buy or
+    sell any security. Data comes from public sources and may be delayed or incomplete. Always do
+    your own research before making investment decisions.</p>
+</footer>
+
 <script>
     async function calculateRisk() {
         const stock = document.getElementById("stockInput").value.toUpperCase().trim();
@@ -345,10 +464,7 @@
         const maxAttempts = 3;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-            status.innerHTML = '<p class="loading">' + (attempt === 1
-                ? 'Analyzing ' + stock + '… this can take a moment.'
-                : 'Connection dropped — retrying ' + stock + ' (attempt ' + attempt + ' of ' + maxAttempts + ')…')
-                + '</p>';
+            startLoader(stock, attempt, maxAttempts);
 
             try {
                 const response = await fetch("/api/assessment?ticker=" + encodeURIComponent(stock));
@@ -356,10 +472,12 @@
 
                 if (!data.success) {
                     // A real, server-reported problem (e.g. unknown ticker) — don't retry.
+                    stopLoader();
                     status.innerHTML = '<p class="error">' + (data.error || "Something went wrong.") + '</p>';
                     return;
                 }
 
+                stopLoader();
                 renderAssessment(data);
                 status.innerHTML = "";
                 output.style.display = "block";
@@ -372,11 +490,165 @@
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     continue;
                 }
+                stopLoader();
                 status.innerHTML = '<p class="error">Could not reach the analyzer after ' + maxAttempts +
-                    ' attempts. Make sure the server is running, then try again.</p>';
+                    ' attempts. Please try again in a moment.</p>';
             }
         }
     }
+
+    // ---- Progressive loader ----
+    // A long silent spinner feels broken even when everything is fine. Show what
+    // the analysis is doing as time passes, plus a live elapsed counter, and set
+    // the expectation up front that an in-depth run can take a minute or two.
+    let loaderTimer = null;
+    let loaderStartedAt = 0;
+
+    function loaderMessage(stock, secs) {
+        if (secs < 12)  return "Analyzing " + stock + " — in-depth analysis usually takes a minute or two…";
+        if (secs < 35)  return "Pulling 5 years of financials and price history for " + stock + "…";
+        if (secs < 75)  return "Comparing " + stock + " against industry peers and macro conditions…";
+        return "Still crunching — large peer groups can take a little longer. Hang tight…";
+    }
+
+    function startLoader(stock, attempt, maxAttempts) {
+        stopLoader();
+        loaderStartedAt = Date.now();
+        const status = document.getElementById("status");
+        // Tickers are validated server-side; strip anything HTML-unsafe before display.
+        const safeStock = stock.replace(/[^A-Z0-9.\-]/g, "");
+        const prefix = attempt > 1
+            ? "Connection dropped — retrying (attempt " + attempt + " of " + maxAttempts + "). "
+            : "";
+
+        const render = () => {
+            const secs = Math.floor((Date.now() - loaderStartedAt) / 1000);
+            status.innerHTML = '<p class="loading"><span class="spinner"></span>'
+                + prefix + loaderMessage(safeStock, secs)
+                + ' <span class="elapsed">(' + secs + 's)</span></p>';
+        };
+        render();
+        loaderTimer = setInterval(render, 1000);
+    }
+
+    function stopLoader() {
+        if (loaderTimer) {
+            clearInterval(loaderTimer);
+            loaderTimer = null;
+        }
+    }
+
+    // ---- Saved analyses ----
+    // Stored per-browser in localStorage: { TICKER: { data, savedAt } }.
+    // No accounts or server storage — see the hint text about staleness.
+    const SAVED_KEY = "mra_saved_v1";
+    let currentAssessment = null;
+
+    function loadSavedMap() {
+        try { return JSON.parse(localStorage.getItem(SAVED_KEY)) || {}; }
+        catch (e) { return {}; }
+    }
+
+    function storeSavedMap(map) {
+        try { localStorage.setItem(SAVED_KEY, JSON.stringify(map)); }
+        catch (e) { /* storage full or blocked — saving is best-effort */ }
+    }
+
+    function saveCurrentAnalysis() {
+        if (!currentAssessment) return;
+        const map = loadSavedMap();
+        map[currentAssessment.ticker] = { data: currentAssessment, savedAt: Date.now() };
+        storeSavedMap(map);
+        const btn = document.getElementById("saveBtn");
+        btn.textContent = "✓ Saved";
+        btn.classList.add("saved");
+        renderSavedList();
+    }
+
+    function updateSaveButton() {
+        const btn = document.getElementById("saveBtn");
+        if (!currentAssessment) return;
+        btn.classList.remove("saved");
+        btn.textContent = loadSavedMap()[currentAssessment.ticker]
+            ? "☆ Update saved analysis"
+            : "☆ Save this analysis";
+    }
+
+    function viewSaved(ticker) {
+        const entry = loadSavedMap()[ticker];
+        if (!entry) return;
+        document.getElementById("status").innerHTML = "";
+        renderAssessment(entry.data);
+        const output = document.getElementById("output");
+        output.style.display = "block";
+        output.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function rerunSaved(ticker) {
+        document.getElementById("stockInput").value = ticker;
+        calculateRisk();
+    }
+
+    function removeSaved(ticker) {
+        const map = loadSavedMap();
+        delete map[ticker];
+        storeSavedMap(map);
+        renderSavedList();
+        if (currentAssessment) updateSaveButton();
+    }
+
+    function renderSavedList() {
+        const section = document.getElementById("savedSection");
+        const list = document.getElementById("savedList");
+        const map = loadSavedMap();
+        const entries = Object.entries(map).sort((a, b) => b[1].savedAt - a[1].savedAt);
+
+        list.innerHTML = "";
+        if (entries.length === 0) {
+            section.style.display = "none";
+            return;
+        }
+        section.style.display = "block";
+
+        entries.forEach(([ticker, entry]) => {
+            const risk = entry.data.generalized_risk_score;
+            const row = document.createElement("div");
+            row.className = "saved-item";
+
+            const score = document.createElement("div");
+            score.className = "saved-score lvl-" + riskLevel(risk);
+            score.textContent = risk;
+            const outOf = document.createElement("span");
+            outOf.textContent = "/10";
+            score.appendChild(outOf);
+
+            const name = document.createElement("div");
+            name.className = "saved-ticker";
+            name.textContent = ticker;
+
+            const date = document.createElement("div");
+            date.className = "saved-date";
+            date.textContent = "Saved " + new Date(entry.savedAt).toLocaleDateString();
+
+            const view = document.createElement("button");
+            view.textContent = "View";
+            view.onclick = () => viewSaved(ticker);
+
+            const rerun = document.createElement("button");
+            rerun.textContent = "Re-run";
+            rerun.onclick = () => rerunSaved(ticker);
+
+            const remove = document.createElement("button");
+            remove.className = "danger";
+            remove.textContent = "Remove";
+            remove.onclick = () => removeSaved(ticker);
+
+            [score, name, date, view, rerun, remove].forEach(el => row.appendChild(el));
+            list.appendChild(row);
+        });
+    }
+
+    renderSavedList();
 
     // Allow Enter key to submit.
     document.getElementById("stockInput").addEventListener("keydown", function (e) {
@@ -420,6 +692,9 @@
     }
 
     function renderAssessment(data) {
+        currentAssessment = data;
+        updateSaveButton();
+
         const risk = data.generalized_risk_score;
         const level = riskLevel(risk);
 
