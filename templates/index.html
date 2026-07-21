@@ -511,6 +511,14 @@
         return "Still crunching — large peer groups can take a little longer. Hang tight…";
     }
 
+    // Clock-style elapsed time (0:45, 1:23) — reads in minutes, matching the
+    // "takes a minute or two" expectation, instead of an ever-growing seconds count.
+    function formatElapsed(secs) {
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        return m + ":" + (s < 10 ? "0" : "") + s;
+    }
+
     function startLoader(stock, attempt, maxAttempts) {
         stopLoader();
         loaderStartedAt = Date.now();
@@ -525,7 +533,7 @@
             const secs = Math.floor((Date.now() - loaderStartedAt) / 1000);
             status.innerHTML = '<p class="loading"><span class="spinner"></span>'
                 + prefix + loaderMessage(safeStock, secs)
-                + ' <span class="elapsed">(' + secs + 's)</span></p>';
+                + ' <span class="elapsed">(' + formatElapsed(secs) + ')</span></p>';
         };
         render();
         loaderTimer = setInterval(render, 1000);
