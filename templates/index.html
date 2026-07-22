@@ -11,66 +11,310 @@
     <meta property="og:type" content="website">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%93%8A%3C/text%3E%3C/svg%3E">
 
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600;700&display=swap" rel="stylesheet">
+
     <style>
         :root {
-            --bg: #f6f7f9;
+            --bg: #f5f6f8;
             --card: #ffffff;
-            --ink: #1c2024;
-            --muted: #5b636b;
-            --line: #e4e7eb;
+            --ink: #0f172a;
+            --muted: #475569;
+            --faint: #64748b;
+            --lighter: #94a3b8;
+            --line: #e6e8ec;
+            --border: #d5d9df;
             --accent: #2563eb;
-            --green: #1a9d6a;
-            --amber: #d98a00;
-            --red: #d6453d;
+            --accent-dark: #1d4ed8;
+            --green: #15803d;
+            --amber: #b45309;
+            --red: #b91c1c;
         }
 
         * { box-sizing: border-box; }
+        html, body { margin: 0; padding: 0; }
 
         body {
-            font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-            color: var(--ink);
+            font-family: 'IBM Plex Sans', system-ui, -apple-system, "Segoe UI", sans-serif;
+            -webkit-font-smoothing: antialiased;
             background: var(--bg);
-            max-width: 880px;
-            margin: 0 auto;
-            padding: 32px 20px 64px;
+            color: var(--ink);
             line-height: 1.55;
         }
+        .mono { font-family: 'IBM Plex Mono', monospace; }
+        a { color: var(--accent); text-decoration: none; }
+        a:hover { color: var(--accent-dark); text-decoration: underline; }
+        input, button { font-family: inherit; }
 
-        h1 { font-size: 26px; margin: 0 0 4px; }
-        .subtitle { color: var(--muted); margin: 0 0 24px; }
+        .wrap { max-width: 1040px; margin: 0 auto; padding: 0 28px; }
 
-        /* ---- Search bar ---- */
-        .search {
+        /* ---- Top bar ---- */
+        .topbar {
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            background: rgba(245, 246, 248, 0.85);
+            backdrop-filter: blur(8px);
+            border-bottom: 1px solid var(--line);
+        }
+        .topbar-inner {
             display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            padding: 14px 28px;
+            max-width: 1040px;
+            margin: 0 auto;
         }
-        .search input {
-            flex: 1 1 240px;
-            padding: 12px 14px;
-            font-size: 16px;
-            border: 1px solid var(--line);
+        .brand { display: flex; align-items: center; gap: 11px; cursor: pointer; }
+        .logo {
+            width: 30px; height: 30px;
             border-radius: 8px;
-        }
-        .search button {
-            padding: 12px 22px;
-            font-size: 16px;
-            font-weight: 600;
-            color: #fff;
             background: var(--accent);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .logo-bars { display: flex; align-items: flex-end; gap: 2.5px; height: 14px; }
+        .logo-bars i { display: block; width: 3px; background: #fff; border-radius: 1px; }
+        .logo-bars i:nth-child(1) { height: 7px; }
+        .logo-bars i:nth-child(2) { height: 11px; }
+        .logo-bars i:nth-child(3) { height: 14px; }
+        .wordmark { font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
+
+        nav { display: flex; align-items: center; gap: 6px; }
+        .tab {
+            padding: 8px 14px;
+            border-radius: 9px;
             border: none;
-            border-radius: 8px;
+            background: transparent;
+            color: var(--faint);
+            font-size: 14px;
+            font-weight: 600;
             cursor: pointer;
         }
-        .search button:hover { background: #1d4fd7; }
+        .tab:hover { background: #eceef1; }
+        .tab.active { background: #eceef1; color: var(--ink); }
 
-        #status { margin-top: 16px; }
-        .loading { color: var(--muted); font-style: italic; }
+        main { padding: 48px 0 88px; }
+
+        /* ---- Home / hero ---- */
+        #view-home { padding-top: 64px; }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 12px 5px 8px;
+            border-radius: 999px;
+            background: var(--card);
+            border: 1px solid var(--line);
+            font-size: 13px;
+            color: var(--muted);
+            font-weight: 500;
+            margin-bottom: 24px;
+        }
+        .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+
+        h1 {
+            font-size: 52px;
+            line-height: 1.04;
+            letter-spacing: -0.03em;
+            font-weight: 700;
+            margin: 0 0 20px;
+        }
+        .subhead {
+            font-size: 19px;
+            line-height: 1.55;
+            color: var(--muted);
+            margin: 0 0 34px;
+            max-width: 620px;
+        }
+
+        /* ---- Search ---- */
+        .search { display: flex; gap: 12px; max-width: 620px; margin-bottom: 22px; }
+        .search-field { flex: 1; position: relative; }
+        .search-field .icon {
+            position: absolute;
+            left: 18px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: var(--lighter);
+            font-size: 18px;
+            pointer-events: none;
+        }
+        .search input {
+            width: 100%;
+            padding: 17px 18px 17px 46px;
+            font-size: 17px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--card);
+            color: var(--ink);
+            font-weight: 500;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+        }
+        .search input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+        }
+        .search button {
+            padding: 0 30px;
+            border: none;
+            border-radius: 12px;
+            background: var(--accent);
+            color: #fff;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 1px 2px rgba(37, 99, 235, 0.25);
+        }
+        .search button:hover { background: var(--accent-dark); }
+
+        .search.compact { max-width: 560px; margin-bottom: 40px; }
+        .search.compact input { padding: 13px 16px 13px 42px; font-size: 15px; border-radius: 11px; }
+        .search.compact .icon { left: 16px; font-size: 16px; }
+        .search.compact button { padding: 0 24px; font-size: 15px; border-radius: 11px; }
+
+        /* ---- Feature chips ---- */
+        .chips { display: flex; flex-wrap: wrap; gap: 10px; max-width: 660px; margin: 0 0 44px; padding: 0; list-style: none; }
+        .chips li {
+            padding: 8px 15px;
+            border-radius: 999px;
+            background: var(--card);
+            border: 1px solid var(--line);
+            font-size: 13.5px;
+            color: var(--muted);
+            font-weight: 500;
+        }
+
+        /* ---- Extension promo ---- */
+        .ext-promo {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 24px;
+            flex-wrap: wrap;
+            padding: 22px 26px;
+            border-radius: 16px;
+            background: #eff5ff;
+            border: 1px solid #d3e2fd;
+            max-width: 960px;
+        }
+        .ext-left { display: flex; align-items: center; gap: 18px; }
+        .ext-icon {
+            width: 46px; height: 46px;
+            border-radius: 12px;
+            background: var(--card);
+            border: 1px solid #d3e2fd;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+            font-size: 22px;
+            color: var(--accent);
+        }
+        .ext-title { font-weight: 600; font-size: 16px; margin-bottom: 3px; }
+        .ext-sub { font-size: 14.5px; color: var(--muted); line-height: 1.45; }
+        .ext-sub strong { color: var(--ink); font-weight: 600; }
+        .ext-promo a.btn {
+            padding: 12px 22px;
+            border-radius: 11px;
+            background: var(--accent);
+            color: #fff;
+            font-size: 15px;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        .ext-promo a.btn:hover { background: var(--accent-dark); text-decoration: none; }
+
+        /* ---- How it works ---- */
+        .steps {
+            margin-top: 56px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 22px;
+        }
+        .step-num { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: var(--accent); margin-bottom: 10px; }
+        .step-title { font-weight: 600; font-size: 16px; margin-bottom: 6px; }
+        .step-body { font-size: 14.5px; color: var(--faint); line-height: 1.5; }
+
+        /* ---- Saved view ---- */
+        .saved-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+        .saved-header h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin: 0; }
+        .saved-count { font-size: 13px; color: var(--lighter); font-family: 'IBM Plex Mono', monospace; }
+        .saved-hint { font-size: 14px; color: var(--lighter); margin: 0 0 24px; }
+        .saved-list { display: flex; flex-direction: column; gap: 12px; }
+
+        .saved-card {
+            display: flex;
+            align-items: center;
+            gap: 22px;
+            padding: 20px 24px;
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+            flex-wrap: wrap;
+        }
+        .saved-score-block { display: flex; flex-direction: column; align-items: center; min-width: 76px; }
+        .saved-score {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 34px;
+            font-weight: 700;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
+        .saved-risk-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; margin-top: 5px; }
+        .saved-divider { width: 1px; align-self: stretch; background: #eceef1; }
+        .saved-info { flex: 1; min-width: 220px; }
+        .saved-title-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .saved-ticker { font-weight: 700; font-size: 19px; letter-spacing: -0.01em; }
+        .saved-name { font-size: 13px; color: var(--faint); }
+        .saved-verdict { font-size: 13px; color: var(--lighter); margin-top: 4px; }
+        .saved-date { font-size: 12.5px; color: #b0b7c1; margin-top: 6px; font-family: 'IBM Plex Mono', monospace; }
+        .saved-actions { display: flex; gap: 8px; flex-shrink: 0; }
+        .saved-actions button {
+            padding: 8px 15px;
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            background: var(--card);
+            color: var(--ink);
+            font-size: 13.5px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .saved-actions button:hover { border-color: var(--accent); color: var(--accent); }
+        .saved-actions button.danger { color: var(--faint); }
+        .saved-actions button.danger:hover { border-color: #fca5a5; color: var(--red); background: #fef2f2; }
+
+        .saved-empty {
+            padding: 48px 24px;
+            text-align: center;
+            background: var(--card);
+            border: 1px dashed var(--border);
+            border-radius: 14px;
+            color: var(--faint);
+            font-size: 15px;
+        }
+        .saved-empty button {
+            display: block;
+            margin: 14px auto 0;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 10px;
+            background: var(--accent);
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .saved-empty button:hover { background: var(--accent-dark); }
+
+        /* ---- Loader / status ---- */
+        #status { margin-bottom: 16px; }
+        .loading { color: var(--muted); font-size: 15px; }
         .error { color: var(--red); font-weight: 600; }
         .spinner {
             display: inline-block;
-            width: 14px;
-            height: 14px;
+            width: 14px; height: 14px;
             border: 2px solid var(--line);
             border-top-color: var(--accent);
             border-radius: 50%;
@@ -79,105 +323,82 @@
             vertical-align: -2px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
-        .elapsed { font-variant-numeric: tabular-nums; font-style: normal; color: var(--muted); }
+        .elapsed { font-variant-numeric: tabular-nums; font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--lighter); }
 
-        /* ---- Cards ---- */
+        /* ---- Results ---- */
         .card {
             background: var(--card);
             border: 1px solid var(--line);
-            border-radius: 12px;
+            border-radius: 14px;
             padding: 22px 24px;
             margin-top: 20px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
         }
-
-        /* ---- Hero ---- */
-        .hero {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 28px;
-            flex-wrap: wrap;
-        }
+        .hero { display: flex; justify-content: space-between; align-items: center; gap: 28px; flex-wrap: wrap; }
         .hero-left { flex: 1 1 240px; }
-        .hero h2 { font-size: 22px; margin: 0 0 6px; }
+        .hero h2 { font-size: 22px; letter-spacing: -0.01em; margin: 0 0 6px; }
         .hero .verdict { color: var(--muted); font-size: 16px; }
 
-        .risk-block { flex: 1 1 280px; min-width: 260px; }
-        .risk-top {
-            display: flex;
-            align-items: baseline;
-            justify-content: flex-end;
-            gap: 10px;
-        }
-        .risk-score {
-            font-size: 64px;
-            font-weight: 800;
-            line-height: 1;
-        }
-        .risk-outof { font-size: 22px; color: var(--muted); }
-        .risk-label {
-            text-align: right;
-            font-weight: 700;
-            font-size: 15px;
-            letter-spacing: .02em;
-            text-transform: uppercase;
-            margin-top: 6px;
-        }
-        .gauge {
-            height: 10px;
-            border-radius: 6px;
-            background: #edf0f3;
+        .save-btn {
             margin-top: 12px;
-            overflow: hidden;
+            border: 1px solid var(--border);
+            background: var(--card);
+            border-radius: 9px;
+            padding: 8px 16px;
+            font-size: 13.5px;
+            font-weight: 600;
+            cursor: pointer;
+            color: var(--ink);
         }
-        .gauge > div { height: 100%; border-radius: 6px; }
-        .risk-caption { text-align: right; color: var(--muted); font-size: 13px; margin-top: 8px; }
+        .save-btn:hover { border-color: var(--accent); color: var(--accent); }
+        .save-btn.saved { border-color: var(--green); color: var(--green); cursor: default; }
 
-        /* risk color helpers (applied via JS) */
-        .lvl-low    { color: var(--green); }
-        .lvl-mod    { color: var(--amber); }
-        .lvl-high   { color: var(--red); }
+        .risk-block { flex: 1 1 280px; min-width: 260px; }
+        .risk-top { display: flex; align-items: baseline; justify-content: flex-end; gap: 10px; }
+        .risk-score {
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 62px;
+            font-weight: 700;
+            line-height: 1;
+            font-variant-numeric: tabular-nums;
+        }
+        .risk-outof { font-size: 22px; color: var(--lighter); }
+        .risk-label { text-align: right; font-weight: 700; font-size: 14px; letter-spacing: .05em; text-transform: uppercase; margin-top: 6px; }
+        .gauge { height: 10px; border-radius: 6px; background: #eceef1; margin-top: 12px; overflow: hidden; }
+        .gauge > div { height: 100%; border-radius: 6px; }
+        .risk-caption { text-align: right; color: var(--lighter); font-size: 13px; margin-top: 8px; }
+
+        .lvl-low  { color: var(--green); }
+        .lvl-mod  { color: var(--amber); }
+        .lvl-high { color: var(--red); }
         .bg-low  { background: var(--green); }
         .bg-mod  { background: var(--amber); }
         .bg-high { background: var(--red); }
 
-        /* ---- Takeaway callout ---- */
-        .takeaway {
-            border-left: 4px solid var(--accent);
-            background: #f0f5ff;
-            border-color: #d8e3fb;
-        }
+        .takeaway { border-left: 4px solid var(--accent); background: #eff5ff; border-color: #d3e2fd; }
         .takeaway h3 { margin: 0 0 10px; font-size: 16px; }
         .takeaway-list { margin: 0; padding-left: 20px; }
         .takeaway-list li { font-size: 16px; margin-bottom: 8px; }
         .takeaway-list li:last-child { margin-bottom: 0; }
 
-        /* plain-language helper line under a metric name */
-        .meaning { color: var(--muted); font-size: 13px; margin-top: 3px; max-width: 460px; }
+        .meaning { color: var(--faint); font-size: 13px; margin-top: 3px; max-width: 460px; }
 
-        /* ---- Risks & strengths ---- */
-        .columns {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-top: 20px;
-        }
-        @media (max-width: 620px) { .columns { grid-template-columns: 1fr; } }
+        .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 20px; }
         .col h3 { margin: 0 0 12px; font-size: 16px; }
-        .col.risks  { border-top: 3px solid var(--red); }
+        .col.risks { border-top: 3px solid var(--red); }
         .col.strengths { border-top: 3px solid var(--green); }
         .item { margin-bottom: 14px; }
         .item:last-child { margin-bottom: 0; }
         .item .t { font-weight: 600; }
         .item .d { color: var(--muted); font-size: 14px; }
 
-        /* ---- Accordions ---- */
         details {
             background: var(--card);
             border: 1px solid var(--line);
-            border-radius: 12px;
+            border-radius: 14px;
             margin-top: 12px;
             padding: 0 24px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
         }
         details > summary {
             cursor: pointer;
@@ -190,263 +411,276 @@
             align-items: center;
         }
         details > summary::-webkit-details-marker { display: none; }
-        details > summary::after { content: "+"; color: var(--muted); font-size: 20px; }
+        details > summary::after { content: "+"; color: var(--lighter); font-size: 20px; }
         details[open] > summary::after { content: "\2212"; }
         .details-body { padding: 0 0 20px; }
 
         table { border-collapse: collapse; width: 100%; }
         th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); font-size: 14px; }
-        th { color: var(--muted); font-weight: 600; }
+        th { color: var(--faint); font-weight: 600; }
         td:first-child, th:first-child { padding-left: 0; }
 
         .cat-row { padding: 14px 0; border-bottom: 1px solid var(--line); }
         .cat-row:last-child { border-bottom: none; }
         .cat-head { display: flex; justify-content: space-between; align-items: baseline; }
         .cat-name { font-weight: 600; }
-        .cat-score { font-weight: 700; }
+        .cat-score { font-weight: 700; font-family: 'IBM Plex Mono', monospace; font-size: 14px; }
         .cat-desc { color: var(--muted); font-size: 14px; margin-top: 4px; }
         .cat-notes { margin: 8px 0 0 18px; padding: 0; font-size: 14px; color: var(--muted); }
 
-        .peers-used { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+        .peers-used { color: var(--faint); font-size: 13px; margin: 0 0 12px; }
         .macro-regime {
-            background: #f2f6fb;
-            border: 1px solid #d6e2f0;
-            border-radius: 8px;
+            background: #eff5ff;
+            border: 1px solid #d3e2fd;
+            border-radius: 10px;
             padding: 10px 12px;
             margin: 0 0 12px;
         }
 
-        .disclaimer { color: var(--muted); font-size: 13px; margin-top: 24px; }
-
-        /* ---- Browser-extension promo ---- */
-        .ext-promo {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            gap: 12px;
-            flex-wrap: wrap;
-            background: #f0f5ff;
-            border: 1px solid #d8e3fb;
-            border-radius: 10px;
-            padding: 12px 16px;
-            margin: 0 0 24px;
-            font-size: 14px;
-        }
-        .ext-promo .ext-text { color: var(--ink); }
-        .ext-promo .ext-text span { color: var(--muted); }
-        .ext-promo a {
-            white-space: nowrap;
-            font-weight: 600;
-            color: #fff;
-            background: var(--accent);
-            padding: 8px 14px;
-            border-radius: 7px;
-            text-decoration: none;
-        }
-        .ext-promo a:hover { background: #1d4fd7; }
-
-        /* ---- Landing feature chips ---- */
-        .chips {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 8px;
-            margin: 0 0 20px;
-            padding: 0;
-            list-style: none;
-        }
-        .chips li {
-            background: var(--card);
-            border: 1px solid var(--line);
-            border-radius: 999px;
-            padding: 6px 14px;
-            font-size: 13px;
-            color: var(--muted);
-        }
-
-        /* ---- Saved analyses ---- */
-        .saved-head { display: flex; justify-content: space-between; align-items: baseline; }
-        .saved-head h3 { margin: 0 0 6px; font-size: 16px; }
-        .saved-hint { color: var(--muted); font-size: 13px; margin: 0 0 4px; }
-        .saved-item {
-            display: flex;
-            align-items: center;
-            gap: 14px;
-            flex-wrap: wrap;
-            padding: 12px 0;
-            border-bottom: 1px solid var(--line);
-        }
-        .saved-item:last-child { border-bottom: none; }
-        .saved-score {
-            font-weight: 800;
-            font-size: 20px;
-            min-width: 58px;
-        }
-        .saved-score span { font-size: 13px; color: var(--muted); font-weight: 600; }
-        .saved-ticker { font-weight: 700; min-width: 70px; }
-        .saved-date { color: var(--muted); font-size: 13px; flex: 1 1 auto; }
-        .saved-item button {
-            border: 1px solid var(--line);
-            background: var(--card);
-            border-radius: 7px;
-            padding: 6px 12px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            color: var(--ink);
-        }
-        .saved-item button:hover { border-color: var(--accent); color: var(--accent); }
-        .saved-item button.danger:hover { border-color: var(--red); color: var(--red); }
-
-        .save-btn {
-            margin-top: 10px;
-            border: 1px solid var(--line);
-            background: var(--card);
-            border-radius: 8px;
-            padding: 8px 16px;
-            font-size: 14px;
-            font-weight: 600;
-            cursor: pointer;
-            color: var(--ink);
-        }
-        .save-btn:hover { border-color: var(--accent); color: var(--accent); }
-        .save-btn.saved { border-color: var(--green); color: var(--green); cursor: default; }
+        .disclaimer { color: var(--faint); font-size: 13px; margin-top: 24px; }
 
         /* ---- Footer ---- */
-        .site-footer {
-            margin-top: 40px;
-            padding-top: 18px;
-            border-top: 1px solid var(--line);
-            color: var(--muted);
-            font-size: 13px;
+        .site-footer { border-top: 1px solid var(--line); background: var(--card); }
+        .site-footer-inner {
+            max-width: 1040px;
+            margin: 0 auto;
+            padding: 26px 28px;
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        .site-footer .legal { font-size: 12.5px; color: var(--lighter); max-width: 640px; line-height: 1.5; }
+        .site-footer .copyright { font-size: 12.5px; color: #b0b7c1; }
+
+        /* ---- Responsive ---- */
+        @media (max-width: 720px) {
+            h1 { font-size: 34px; }
+            .subhead { font-size: 16px; }
+            #view-home { padding-top: 36px; }
+            .steps { grid-template-columns: 1fr; gap: 28px; }
+            .columns { grid-template-columns: 1fr; }
+            .saved-divider { display: none; }
+            .topbar-inner { padding: 12px 16px; }
+            .wrap { padding: 0 16px; }
         }
     </style>
 </head>
 
 <body>
 
-<h1>Macro Risk Analyzer</h1>
-<p class="subtitle">Type any stock ticker and get an in-depth risk read in plain English — no finance degree required.</p>
-
-<ul class="chips">
-    <li>0–10 risk score</li>
-    <li>Key risks &amp; strengths</li>
-    <li>Valuation vs. peers</li>
-    <li>Macro context</li>
-    <li>What it means for you</li>
-</ul>
-
-<!-- Cross-reference: the lightweight browser extension. Replace href with your
-     Chrome Web Store listing once published. -->
-<div class="ext-promo">
-    <div class="ext-text">Analyze tickers as you browse —
-        <span>get the free Macro Risk Analyzer Lite browser extension for instant in-page scores.</span>
-    </div>
-    <a href="https://chrome.google.com/webstore/detail/your-extension-id" target="_blank" rel="noopener">Get the extension</a>
-</div>
-
-<div class="search">
-    <input type="text" id="stockInput" placeholder="e.g. AAPL" autofocus>
-    <button onclick="calculateRisk()">Analyze</button>
-</div>
-
-<div id="status"></div>
-
-<!-- Saved analyses (stored in this browser via localStorage — no account needed) -->
-<div id="savedSection" class="card" style="display: none;">
-    <div class="saved-head">
-        <h3>Saved analyses</h3>
-    </div>
-    <p class="saved-hint">Saved in this browser. Scores age — re-run before acting on one.</p>
-    <div id="savedList"></div>
-</div>
-
-<div id="output" style="display: none;">
-
-    <!-- A. Hero: risk score is the focal point -->
-    <div class="card hero">
-        <div class="hero-left">
-            <h2 id="title"></h2>
-            <div class="verdict" id="verdict"></div>
-            <button id="saveBtn" class="save-btn" onclick="saveCurrentAnalysis()">&#9734; Save this analysis</button>
+<!-- Top bar -->
+<header class="topbar">
+    <div class="topbar-inner">
+        <div class="brand" onclick="switchView('home')">
+            <div class="logo"><div class="logo-bars"><i></i><i></i><i></i></div></div>
+            <span class="wordmark">Macro Risk Analyzer</span>
         </div>
-        <div class="risk-block">
-            <div class="risk-top">
-                <span class="risk-score" id="riskScore"></span>
-                <span class="risk-outof">/10</span>
+        <nav>
+            <button id="tab-home" class="tab active" onclick="switchView('home')">Home</button>
+            <button id="tab-saved" class="tab" onclick="switchView('saved')">Saved</button>
+        </nav>
+    </div>
+</header>
+
+<!-- ============ HOME ============ -->
+<main id="view-home" class="wrap">
+    <div class="badge"><span class="dot"></span>Plain-English stock risk, scored 0&ndash;10</div>
+    <h1>Know a stock&rsquo;s risk<br>before you touch it.</h1>
+    <p class="subhead">Type any ticker and get an in-depth risk read in plain English &mdash; key risks, valuation vs. peers, and macro context. No finance degree required.</p>
+
+    <div class="search">
+        <div class="search-field">
+            <span class="icon">&#9906;</span>
+            <input type="text" id="heroInput" placeholder="e.g. AAPL" autofocus>
+        </div>
+        <button onclick="analyzeFrom('heroInput')">Analyze</button>
+    </div>
+
+    <ul class="chips">
+        <li>0&ndash;10 risk score</li>
+        <li>Key risks &amp; strengths</li>
+        <li>Valuation vs. peers</li>
+        <li>Macro context</li>
+        <li>What it means for you</li>
+    </ul>
+
+    <!-- Replace href with the Chrome Web Store listing once published. -->
+    <div class="ext-promo">
+        <div class="ext-left">
+            <div class="ext-icon">&#9781;</div>
+            <div>
+                <div class="ext-title">Analyze tickers as you browse</div>
+                <div class="ext-sub">Get the free <strong>Macro Risk Analyzer Lite</strong> browser extension for instant in-page scores.</div>
             </div>
-            <div class="risk-label" id="riskLabel"></div>
-            <div class="gauge"><div id="gaugeFill"></div></div>
-            <div class="risk-caption" id="qualityCaption"></div>
         </div>
+        <a class="btn" href="https://chrome.google.com/webstore/detail/your-extension-id" target="_blank" rel="noopener">Get the extension</a>
     </div>
 
-    <!-- Key user takeaway: what this means for you -->
-    <div class="card takeaway">
-        <h3>What this means for you</h3>
-        <ul id="investorFit" class="takeaway-list"></ul>
+    <div class="steps">
+        <div>
+            <div class="step-num">01</div>
+            <div class="step-title">Enter a ticker</div>
+            <div class="step-body">Type any symbol &mdash; AAPL, MSFT, a small-cap you&rsquo;re curious about.</div>
+        </div>
+        <div>
+            <div class="step-num">02</div>
+            <div class="step-title">We read the fundamentals</div>
+            <div class="step-body">Five years of financials, price history, peer comps, and the macro backdrop.</div>
+        </div>
+        <div>
+            <div class="step-num">03</div>
+            <div class="step-title">Get a plain-English read</div>
+            <div class="step-body">One score, the real risks and strengths, and what it means for you.</div>
+        </div>
+    </div>
+</main>
+
+<!-- ============ SAVED ============ -->
+<main id="view-saved" class="wrap" style="display: none;">
+    <div class="search compact">
+        <div class="search-field">
+            <span class="icon">&#9906;</span>
+            <input type="text" id="savedInput" placeholder="Analyze another ticker&hellip;">
+        </div>
+        <button onclick="analyzeFrom('savedInput')">Analyze</button>
     </div>
 
-    <!-- B. Key risks & strengths, side by side -->
-    <div class="columns">
-        <div class="card col strengths">
-            <h3>Key strengths</h3>
-            <div id="strengthsList"></div>
+    <div class="saved-header">
+        <h2>Saved analyses</h2>
+        <span class="saved-count" id="savedCount"></span>
+    </div>
+    <p class="saved-hint">Saved in this browser. Scores age &mdash; re-run before acting on one.</p>
+    <div class="saved-list" id="savedList"></div>
+</main>
+
+<!-- ============ RESULTS ============ -->
+<main id="view-results" class="wrap" style="display: none;">
+    <div class="search compact">
+        <div class="search-field">
+            <span class="icon">&#9906;</span>
+            <input type="text" id="resultsInput" placeholder="Analyze another ticker&hellip;">
         </div>
-        <div class="card col risks">
-            <h3>Key risks</h3>
-            <div id="risksList"></div>
-        </div>
+        <button onclick="analyzeFrom('resultsInput')">Analyze</button>
     </div>
 
-    <!-- C/D. Detail, tucked away in accordions -->
-    <details>
-        <summary>Category breakdown</summary>
-        <div class="details-body" id="categoryBreakdown"></div>
-    </details>
+    <div id="status"></div>
 
-    <details>
-        <summary>Valuation vs. peers</summary>
-        <div class="details-body">
-            <p class="peers-used" id="peersUsed"></p>
-            <table>
-                <thead>
-                    <tr><th>Metric</th><th>This stock</th><th>Peer median</th><th>vs. peers</th></tr>
-                </thead>
-                <tbody id="peerComparisonTable"></tbody>
-            </table>
+    <div id="output" style="display: none;">
+
+        <!-- Hero: risk score is the focal point -->
+        <div class="card hero" style="margin-top: 0;">
+            <div class="hero-left">
+                <h2 id="title"></h2>
+                <div class="verdict" id="verdict"></div>
+                <button id="saveBtn" class="save-btn" onclick="saveCurrentAnalysis()">&#9734; Save this analysis</button>
+            </div>
+            <div class="risk-block">
+                <div class="risk-top">
+                    <span class="risk-score" id="riskScore"></span>
+                    <span class="risk-outof">/10</span>
+                </div>
+                <div class="risk-label" id="riskLabel"></div>
+                <div class="gauge"><div id="gaugeFill"></div></div>
+                <div class="risk-caption" id="qualityCaption"></div>
+            </div>
         </div>
-    </details>
 
-    <details>
-        <summary>Macro context</summary>
-        <div class="details-body">
-            <p class="macro-regime" id="macroRegime"></p>
-            <div id="macroNotes"></div>
+        <!-- Key user takeaway -->
+        <div class="card takeaway">
+            <h3>What this means for you</h3>
+            <ul id="investorFit" class="takeaway-list"></ul>
         </div>
-    </details>
 
-    <details>
-        <summary>Key metrics</summary>
-        <div class="details-body">
-            <table><tbody id="metricsTable"></tbody></table>
+        <!-- Key risks & strengths -->
+        <div class="columns">
+            <div class="card col strengths" style="margin-top: 0;">
+                <h3>Key strengths</h3>
+                <div id="strengthsList"></div>
+            </div>
+            <div class="card col risks" style="margin-top: 0;">
+                <h3>Key risks</h3>
+                <div id="risksList"></div>
+            </div>
         </div>
-    </details>
 
-    <p class="disclaimer" id="disclaimer"></p>
-</div>
+        <!-- Detail accordions -->
+        <details>
+            <summary>Category breakdown</summary>
+            <div class="details-body" id="categoryBreakdown"></div>
+        </details>
 
+        <details>
+            <summary>Valuation vs. peers</summary>
+            <div class="details-body">
+                <p class="peers-used" id="peersUsed"></p>
+                <table>
+                    <thead>
+                        <tr><th>Metric</th><th>This stock</th><th>Peer median</th><th>vs. peers</th></tr>
+                    </thead>
+                    <tbody id="peerComparisonTable"></tbody>
+                </table>
+            </div>
+        </details>
+
+        <details>
+            <summary>Macro context</summary>
+            <div class="details-body">
+                <p class="macro-regime" id="macroRegime"></p>
+                <div id="macroNotes"></div>
+            </div>
+        </details>
+
+        <details>
+            <summary>Key metrics</summary>
+            <div class="details-body">
+                <table><tbody id="metricsTable"></tbody></table>
+            </div>
+        </details>
+
+        <p class="disclaimer" id="disclaimer"></p>
+    </div>
+</main>
+
+<!-- Footer -->
 <footer class="site-footer">
-    <p>Macro Risk Analyzer is an automated research tool provided for informational and educational
-    purposes only. It is not investment advice, and its scores are not recommendations to buy or
-    sell any security. Data comes from public sources and may be delayed or incomplete. Always do
-    your own research before making investment decisions.</p>
+    <div class="site-footer-inner">
+        <span class="legal">For informational purposes only. Not investment advice. Risk scores are
+        estimates and can change &mdash; always do your own research before acting.</span>
+        <span class="copyright">&copy; 2026 Macro Risk Analyzer</span>
+    </div>
 </footer>
 
 <script>
-    async function calculateRisk() {
-        const stock = document.getElementById("stockInput").value.toUpperCase().trim();
+    // ---- View switching (home / saved / results) ----
+    function switchView(name) {
+        ["home", "saved", "results"].forEach(v => {
+            document.getElementById("view-" + v).style.display = (v === name) ? "block" : "none";
+            const tab = document.getElementById("tab-" + v);
+            if (tab) tab.classList.toggle("active", v === name);
+        });
+        if (name === "saved") renderSavedList();
+        window.scrollTo({ top: 0 });
+    }
+
+    function analyzeFrom(inputId) {
+        calculateRisk(document.getElementById(inputId).value);
+    }
+
+    ["heroInput", "savedInput", "resultsInput"].forEach(id => {
+        document.getElementById(id).addEventListener("keydown", function (e) {
+            if (e.key === "Enter") analyzeFrom(id);
+        });
+    });
+
+    async function calculateRisk(rawTicker) {
+        const stock = (rawTicker || "").toUpperCase().trim();
         const status = document.getElementById("status");
         const output = document.getElementById("output");
+
+        switchView("results");
+        document.getElementById("resultsInput").value = stock;
 
         if (!stock) {
             status.innerHTML = '<p class="error">Please enter a stock ticker.</p>';
@@ -456,11 +690,9 @@
 
         output.style.display = "none";
 
-        // The first (cold) request can take ~30s while the macro/peer caches fill,
-        // and the connection sometimes drops before it finishes ("Failed to fetch").
-        // That's a transient network hiccup, not a real error — and the request is a
-        // read, so it's safe to just try again. We retry a few times automatically;
-        // the retry usually hits warm caches and succeeds quickly.
+        // The first (cold) request can take a while, and the connection sometimes
+        // drops before it finishes ("Failed to fetch"). That's a transient network
+        // hiccup, not a real error — the request is a read, so retry automatically.
         const maxAttempts = 3;
 
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -481,11 +713,9 @@
                 renderAssessment(data);
                 status.innerHTML = "";
                 output.style.display = "block";
-                output.scrollIntoView({ behavior: "smooth", block: "start" });
                 return;
 
             } catch (error) {
-                // Network-level failure. Retry after a short pause unless we're out of attempts.
                 if (attempt < maxAttempts) {
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     continue;
@@ -499,7 +729,7 @@
 
     // ---- Progressive loader ----
     // A long silent spinner feels broken even when everything is fine. Show what
-    // the analysis is doing as time passes, plus a live elapsed counter, and set
+    // the analysis is doing as time passes, plus a live elapsed clock, and set
     // the expectation up front that an in-depth run can take a minute or two.
     let loaderTimer = null;
     let loaderStartedAt = 0;
@@ -570,7 +800,6 @@
         const btn = document.getElementById("saveBtn");
         btn.textContent = "✓ Saved";
         btn.classList.add("saved");
-        renderSavedList();
     }
 
     function updateSaveButton() {
@@ -585,16 +814,15 @@
     function viewSaved(ticker) {
         const entry = loadSavedMap()[ticker];
         if (!entry) return;
+        switchView("results");
         document.getElementById("status").innerHTML = "";
+        document.getElementById("resultsInput").value = ticker;
         renderAssessment(entry.data);
-        const output = document.getElementById("output");
-        output.style.display = "block";
-        output.scrollIntoView({ behavior: "smooth", block: "start" });
+        document.getElementById("output").style.display = "block";
     }
 
     function rerunSaved(ticker) {
-        document.getElementById("stockInput").value = ticker;
-        calculateRisk();
+        calculateRisk(ticker);
     }
 
     function removeSaved(ticker) {
@@ -605,70 +833,99 @@
         if (currentAssessment) updateSaveButton();
     }
 
+    function riskInfo(score) {
+        if (score <= 3) return { level: "low", label: "LOW" };
+        if (score <= 6) return { level: "mod", label: "MODERATE" };
+        return { level: "high", label: "HIGH" };
+    }
+
+    function riskLevel(score) { return riskInfo(score).level; }
+
     function renderSavedList() {
-        const section = document.getElementById("savedSection");
         const list = document.getElementById("savedList");
+        const countEl = document.getElementById("savedCount");
         const map = loadSavedMap();
         const entries = Object.entries(map).sort((a, b) => b[1].savedAt - a[1].savedAt);
 
+        countEl.textContent = entries.length + " saved";
         list.innerHTML = "";
+
         if (entries.length === 0) {
-            section.style.display = "none";
+            const empty = document.createElement("div");
+            empty.className = "saved-empty";
+            empty.textContent = "Nothing saved yet. Analyze a stock, then hit “Save this analysis” to keep it here.";
+            const btn = document.createElement("button");
+            btn.textContent = "Analyze a stock";
+            btn.onclick = () => switchView("home");
+            empty.appendChild(btn);
+            list.appendChild(empty);
             return;
         }
-        section.style.display = "block";
 
         entries.forEach(([ticker, entry]) => {
             const risk = entry.data.generalized_risk_score;
-            const row = document.createElement("div");
-            row.className = "saved-item";
+            const info = riskInfo(risk);
+            const card = document.createElement("div");
+            card.className = "saved-card";
 
+            const scoreBlock = document.createElement("div");
+            scoreBlock.className = "saved-score-block";
             const score = document.createElement("div");
-            score.className = "saved-score lvl-" + riskLevel(risk);
-            score.textContent = risk;
-            const outOf = document.createElement("span");
-            outOf.textContent = "/10";
-            score.appendChild(outOf);
+            score.className = "saved-score lvl-" + info.level;
+            score.textContent = risk + "/10";
+            const label = document.createElement("div");
+            label.className = "saved-risk-label lvl-" + info.level;
+            label.textContent = info.label;
+            scoreBlock.appendChild(score);
+            scoreBlock.appendChild(label);
 
-            const name = document.createElement("div");
-            name.className = "saved-ticker";
-            name.textContent = ticker;
+            const divider = document.createElement("div");
+            divider.className = "saved-divider";
 
+            const infoBox = document.createElement("div");
+            infoBox.className = "saved-info";
+            const titleRow = document.createElement("div");
+            titleRow.className = "saved-title-row";
+            const tk = document.createElement("span");
+            tk.className = "saved-ticker";
+            tk.textContent = ticker;
+            titleRow.appendChild(tk);
+            if (entry.data.company_name) {
+                const nm = document.createElement("span");
+                nm.className = "saved-name";
+                nm.textContent = entry.data.company_name;
+                titleRow.appendChild(nm);
+            }
+            const verdict = document.createElement("div");
+            verdict.className = "saved-verdict";
+            verdict.textContent = entry.data.verdict || "";
             const date = document.createElement("div");
             date.className = "saved-date";
             date.textContent = "Saved " + new Date(entry.savedAt).toLocaleDateString();
+            infoBox.appendChild(titleRow);
+            infoBox.appendChild(verdict);
+            infoBox.appendChild(date);
 
+            const actions = document.createElement("div");
+            actions.className = "saved-actions";
             const view = document.createElement("button");
             view.textContent = "View";
             view.onclick = () => viewSaved(ticker);
-
             const rerun = document.createElement("button");
             rerun.textContent = "Re-run";
             rerun.onclick = () => rerunSaved(ticker);
-
             const remove = document.createElement("button");
             remove.className = "danger";
             remove.textContent = "Remove";
             remove.onclick = () => removeSaved(ticker);
+            [view, rerun, remove].forEach(b => actions.appendChild(b));
 
-            [score, name, date, view, rerun, remove].forEach(el => row.appendChild(el));
-            list.appendChild(row);
+            [scoreBlock, divider, infoBox, actions].forEach(el => card.appendChild(el));
+            list.appendChild(card);
         });
     }
 
-    renderSavedList();
-
-    // Allow Enter key to submit.
-    document.getElementById("stockInput").addEventListener("keydown", function (e) {
-        if (e.key === "Enter") calculateRisk();
-    });
-
-    function riskLevel(score) {
-        if (score <= 3) return "low";
-        if (score <= 6) return "mod";
-        return "high";
-    }
-
+    // ---- Results rendering ----
     let GLOSSARY = {};
 
     function renderTakeaway(data) {
@@ -706,7 +963,10 @@
         const risk = data.generalized_risk_score;
         const level = riskLevel(risk);
 
-        document.getElementById("title").innerText = data.ticker + " — Macro Risk Analysis";
+        const heading = data.company_name
+            ? data.ticker + " · " + data.company_name
+            : data.ticker + " — Macro Risk Analysis";
+        document.getElementById("title").innerText = heading;
         document.getElementById("verdict").innerText = data.verdict;
 
         const riskScore = document.getElementById("riskScore");

@@ -2690,9 +2690,17 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
     risks_and_strengths = build_risks_and_strengths(summary)
     investor_fit = build_investor_fit(summary)
 
+    # Company display name for the UI (e.g. saved-analysis cards). The Ticker is
+    # already cached from the assessment run, so .info costs no extra network call.
+    info = safe_call(lambda: get_ticker(summary["ticker"]).info, label="company_name")
+    if not isinstance(info, dict):
+        info = {}
+    company_name = info.get("shortName") or info.get("longName") or ""
+
     return make_json_safe({
         "success": True,
         "ticker": summary["ticker"],
+        "company_name": company_name,
         "verdict": summary["verdict"],
         "overall_quality_score": summary["overall_quality_score"],
         "generalized_risk_score": summary["generalized_risk_score"],
