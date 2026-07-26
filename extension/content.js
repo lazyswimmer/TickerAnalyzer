@@ -80,6 +80,8 @@
     .regime { background: #f2f6fb; border: 1px solid #d6e2f0; border-radius: 8px; padding: 9px 11px; }
     .err { color: #d6453d; font-weight: 600; }
     .foot { margin-top: 14px; color: #9aa1a8; font-size: 12px; text-align: center; }
+    .foot a { color: #2563eb; text-decoration: none; font-weight: 600; }
+    .foot a:hover { text-decoration: underline; }
   `;
 
   function ensurePanel() {
@@ -177,7 +179,8 @@
 
       <button class="expand">Show full details ▾</button>
       ${fullReport(data)}
-      <div class="foot">Generated in your browser by Macro Risk Analyzer Lite</div>`;
+      <div class="foot">Generated in your browser by Macro Risk Analyzer Lite<br>
+        <a href="https://tickeranalyzer.onrender.com" target="_blank" rel="noopener">Get the full in-depth analysis &rarr;</a></div>`;
 
     const full = body().querySelector(".full");
     const btn = body().querySelector(".expand");
