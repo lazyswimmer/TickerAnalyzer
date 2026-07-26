@@ -1,0 +1,15 @@
+name: Keep Render instance awake
+
+on:
+  schedule:
+    # Every 10 minutes; Render free instances spin down after 15 idle minutes.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /health
+        # --max-time caps a hung request; retries cover a cold start already in progress.
+        run: curl -fsS --max-time 90 --retry 3 --retry-delay 20 https://tickeranalyzer.onrender.com/health

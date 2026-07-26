@@ -21,6 +21,11 @@ threading.Thread(target=_prewarm_macro_cache, daemon=True).start()
 def home():
     return render_template("index.html")
 
+@app.route("/health")
+def health():
+    # Cheap endpoint for uptime pings so the free instance never idles out.
+    return "ok", 200
+
 @app.route("/api/assessment")
 def api_assessment():
     ticker = request.args.get("ticker", "").upper().strip()
