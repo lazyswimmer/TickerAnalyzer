@@ -131,6 +131,46 @@ def latest_value(df: pd.DataFrame, row_name: str) -> Optional[float]:
         return None
 
 
+def ttm_value(
+    quarterly_df: pd.DataFrame,
+    annual_df: pd.DataFrame,
+    row_name: str,
+) -> Optional[float]:
+    """Trailing-twelve-month value of a *flow* row (revenue, FCF, capex, ...):
+    the sum of the four most recent quarterly columns.
+
+    Falls back to the latest annual figure when fewer than four quarters are
+    available (some foreign and small-cap tickers report semi-annually, and
+    newly listed ones have short histories). The annual number can be up to
+    ~14 months stale, but it beats returning nothing.
+    """
+    try:
+        if (
+            quarterly_df is not None
+            and not quarterly_df.empty
+            and row_name in quarterly_df.index
+        ):
+            series = quarterly_df.loc[row_name].dropna()
+            if len(series) >= 4:
+                # yfinance orders columns most-recent-first.
+                return clean_number(series.iloc[:4].sum())
+    except Exception:
+        pass
+    return latest_value(annual_df, row_name)
+
+
+def mrq_value(
+    quarterly_df: pd.DataFrame,
+    annual_df: pd.DataFrame,
+    row_name: str,
+) -> Optional[float]:
+    """Most-recent-quarter value of a *stock* row (receivables, inventory, ...).
+    Point-in-time balance-sheet items should never be summed across quarters —
+    the freshest single column is the right reading. Falls back to annual."""
+    value = latest_value(quarterly_df, row_name)
+    return value if value is not None else latest_value(annual_df, row_name)
+
+
 def flatten_yfinance_columns(df: pd.DataFrame) -> pd.DataFrame:
     """Flatten MultiIndex columns that yfinance sometimes returns."""
     if isinstance(df.columns, pd.MultiIndex):
@@ -853,21 +893,27 @@ def retrieve_peer_relative_valuation(
 # ============================================================
 
 def analyze_capital_allocation(ticker: str) -> Dict[str, Any]:
+    # All flow figures are trailing-twelve-month (see ttm_value) so buybacks,
+    # dividends, capex, and SBC reflect the last 4 reported quarters — matching
+    # the freeCashflow field from .info, which Yahoo also reports as TTM.
     stock = get_ticker(ticker)
 
     cashflow = stock.cashflow
     income = stock.income_stmt
     balance = stock.balance_sheet
     info = stock.info
+    q_cashflow = stock.quarterly_cashflow
+    q_income = stock.quarterly_financials
+    q_balance = stock.quarterly_balance_sheet
 
-    buybacks = latest_value(cashflow, "Repurchase Of Capital Stock")
-    dividends_paid = latest_value(cashflow, "Cash Dividends Paid")
-    capex = latest_value(cashflow, "Capital Expenditure")
+    buybacks = ttm_value(q_cashflow, cashflow, "Repurchase Of Capital Stock")
+    dividends_paid = ttm_value(q_cashflow, cashflow, "Cash Dividends Paid")
+    capex = ttm_value(q_cashflow, cashflow, "Capital Expenditure")
     free_cash_flow = info.get("freeCashflow")
-    operating_cash_flow = latest_value(cashflow, "Operating Cash Flow")
-    net_income = latest_value(income, "Net Income")
-    stock_based_comp = latest_value(cashflow, "Stock Based Compensation")
-    revenue = latest_value(income, "Total Revenue")
+    operating_cash_flow = ttm_value(q_cashflow, cashflow, "Operating Cash Flow")
+    net_income = ttm_value(q_income, income, "Net Income")
+    stock_based_comp = ttm_value(q_cashflow, cashflow, "Stock Based Compensation")
+    revenue = ttm_value(q_income, income, "Total Revenue")
 
     return {
         "free_cash_flow_from_info": free_cash_flow,
@@ -887,23 +933,29 @@ def analyze_capital_allocation(ticker: str) -> Dict[str, Any]:
             if stock_based_comp is not None and revenue not in (None, 0)
             else None
         ),
-        "retained_earnings_latest": latest_value(balance, "Retained Earnings"),
+        "retained_earnings_latest": mrq_value(q_balance, balance, "Retained Earnings"),
     }
 
 
 def analyze_earnings_quality(ticker: str) -> Dict[str, Any]:
+    # Flow figures are trailing-twelve-month (sum of the last 4 quarters) so the
+    # metrics track the latest earnings report instead of the last fiscal year,
+    # which can be ~a year stale. Balance-sheet items are most-recent-quarter.
     stock = get_ticker(ticker)
 
     cashflow = stock.cashflow
     income = stock.income_stmt
     balance = stock.balance_sheet
+    q_cashflow = stock.quarterly_cashflow
+    q_income = stock.quarterly_financials
+    q_balance = stock.quarterly_balance_sheet
 
-    revenue = latest_value(income, "Total Revenue")
-    net_income = latest_value(income, "Net Income")
-    ocf = latest_value(cashflow, "Operating Cash Flow")
-    fcf = latest_value(cashflow, "Free Cash Flow")
-    receivables = latest_value(balance, "Accounts Receivable")
-    inventory = latest_value(balance, "Inventory")
+    revenue = ttm_value(q_income, income, "Total Revenue")
+    net_income = ttm_value(q_income, income, "Net Income")
+    ocf = ttm_value(q_cashflow, cashflow, "Operating Cash Flow")
+    fcf = ttm_value(q_cashflow, cashflow, "Free Cash Flow")
+    receivables = mrq_value(q_balance, balance, "Accounts Receivable")
+    inventory = mrq_value(q_balance, balance, "Inventory")
 
     return {
         "revenue_latest": revenue,
@@ -955,13 +1007,18 @@ def analyze_balance_sheet_risk(ticker: str) -> Dict[str, Any]:
     info = stock.info
     balance = stock.balance_sheet
     income = stock.income_stmt
+    q_balance = stock.quarterly_balance_sheet
+    q_income = stock.quarterly_financials
 
-    total_debt = info.get("totalDebt") or latest_value(balance, "Total Debt")
-    cash = info.get("totalCash") or latest_value(balance, "Cash And Cash Equivalents")
+    # Debt and cash come from .info (most recent quarter) with a statement
+    # fallback; interest coverage uses TTM flows so it reflects the last four
+    # reported quarters rather than the last fiscal year.
+    total_debt = info.get("totalDebt") or mrq_value(q_balance, balance, "Total Debt")
+    cash = info.get("totalCash") or mrq_value(q_balance, balance, "Cash And Cash Equivalents")
     ebitda = info.get("ebitda")
 
-    operating_income = latest_value(income, "Operating Income")
-    interest_expense = latest_value(income, "Interest Expense")
+    operating_income = ttm_value(q_income, income, "Operating Income")
+    interest_expense = ttm_value(q_income, income, "Interest Expense")
 
     return {
         "total_debt": total_debt,
@@ -2066,10 +2123,10 @@ METRIC_GLOSSARY = {
     "Operating Margin": "Profit left from core operations, as a share of revenue.",
     "Gross Margin": "Revenue left after the direct cost of making the product.",
     "Return on Equity": "Profit generated per dollar of shareholder money; higher is more efficient.",
-    "FCF Margin": "Free cash flow (cash left after running and investing in the business) as a share of revenue.",
+    "FCF Margin (TTM)": "Free cash flow (cash left after running and investing in the business) as a share of revenue, over the last 12 months.",
     "Net Debt / EBITDA": "Debt minus cash versus yearly operating profit — roughly how many years of profit it would take to repay debt; lower is safer.",
     "Current Ratio": "Short-term assets versus short-term bills — above 1 means it can cover near-term obligations.",
-    "Interest Coverage": "How many times operating profit covers interest payments; higher is safer.",
+    "Interest Coverage (TTM)": "How many times operating profit covered interest payments over the last 12 months; higher is safer.",
     "CAGR": "Compound annual growth rate — the average yearly return over the period.",
     "Annualized Volatility": "How much the price swings in a typical year; higher is a bumpier ride.",
     "Max Drawdown": "The worst peak-to-trough price drop over the period.",
@@ -2145,10 +2202,10 @@ def build_metric_snapshot(assessment):
         "Earnings Growth": pct(snapshot.get("earningsGrowth")),
         "Operating Margin": pct(snapshot.get("operatingMargins")),
         "Gross Margin": pct(snapshot.get("grossMargins")),
-        "FCF Margin": pct(earnings.get("fcf_margin") if isinstance(earnings, dict) else None),
+        "FCF Margin (TTM)": pct(earnings.get("fcf_margin") if isinstance(earnings, dict) else None),
         "Net Debt / EBITDA": num(balance.get("net_debt_to_ebitda") if isinstance(balance, dict) else None),
         "Current Ratio": num(balance.get("current_ratio") if isinstance(balance, dict) else None),
-        "Interest Coverage": num(balance.get("interest_coverage") if isinstance(balance, dict) else None),
+        "Interest Coverage (TTM)": num(balance.get("interest_coverage") if isinstance(balance, dict) else None),
         "CAGR": pct(historical.get("cagr") if isinstance(historical, dict) else None),
         "Annualized Volatility": pct(historical.get("annualized_volatility") if isinstance(historical, dict) else None),
         "Max Drawdown": pct(historical.get("max_drawdown") if isinstance(historical, dict) else None),
