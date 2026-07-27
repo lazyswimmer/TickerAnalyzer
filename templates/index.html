@@ -175,6 +175,43 @@
         .search.compact .icon { left: 16px; font-size: 16px; }
         .search.compact button { padding: 0 24px; font-size: 15px; border-radius: 11px; }
 
+        /* ---- Ticker autocomplete ---- */
+        .ac-menu {
+            position: absolute;
+            top: calc(100% + 6px);
+            left: 0;
+            right: 0;
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 12px;
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.10);
+            z-index: 30;
+            overflow: hidden;
+            display: none;
+        }
+        .ac-item {
+            display: flex;
+            align-items: baseline;
+            gap: 12px;
+            padding: 10px 16px;
+            cursor: pointer;
+        }
+        .ac-item.active, .ac-item:hover { background: #f0f4fa; }
+        .ac-ticker {
+            font-family: 'IBM Plex Mono', monospace;
+            font-weight: 600;
+            font-size: 14px;
+            min-width: 64px;
+            flex-shrink: 0;
+        }
+        .ac-name {
+            color: var(--faint);
+            font-size: 13.5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         /* ---- Feature chips ---- */
         .chips { display: flex; flex-wrap: wrap; gap: 10px; max-width: 660px; margin: 0 0 44px; padding: 0; list-style: none; }
         .chips li {
@@ -684,11 +721,131 @@
         calculateRisk(document.getElementById(inputId).value);
     }
 
-    ["heroInput", "savedInput", "resultsInput"].forEach(id => {
-        document.getElementById(id).addEventListener("keydown", function (e) {
-            if (e.key === "Enter") analyzeFrom(id);
+    // ---- Ticker autocomplete ----
+    // The full ticker+name list (SEC-registered companies, ~market-cap order)
+    // is fetched once and searched client-side on each keystroke — no
+    // per-keystroke server calls. If the fetch fails, search still works;
+    // you just type tickers without suggestions.
+    let TICKER_LIST = null;
+
+    // SEC names lag famous rebrands (Alphabet not "Google", Meta not
+    // "Facebook") — map what people actually type to the tickers they mean.
+    const TICKER_ALIASES = {
+        "google": ["GOOG", "GOOGL"],
+        "alphabet": ["GOOG", "GOOGL"],
+        "facebook": ["META"],
+        "fb": ["META"],
+    };
+
+    fetch("/api/tickers")
+        .then(r => (r.ok ? r.json() : []))
+        .then(list => { TICKER_LIST = Array.isArray(list) && list.length ? list : null; })
+        .catch(() => {});
+
+    function searchTickers(query) {
+        if (!TICKER_LIST) return [];
+        const q = query.trim().toLowerCase();
+        if (!q) return [];
+        const qUpper = q.toUpperCase();
+
+        const aliasHits = new Set();
+        Object.entries(TICKER_ALIASES).forEach(([name, ticks]) => {
+            if (name.startsWith(q)) ticks.forEach(t => aliasHits.add(t));
         });
-    });
+
+        // Rank: exact ticker, ticker prefix / alias, name prefix, word prefix,
+        // then substring (3+ chars only). List order (~market cap) breaks ties.
+        const scored = [];
+        for (let i = 0; i < TICKER_LIST.length; i++) {
+            const entry = TICKER_LIST[i];
+            const name = entry.n.toLowerCase();
+            let score = null;
+            if (entry.t === qUpper) score = 0;
+            else if (entry.t.startsWith(qUpper) || aliasHits.has(entry.t)) score = 1;
+            else if (name.startsWith(q)) score = 2;
+            else if (name.split(/[\s,.\-\/]+/).some(w => w.startsWith(q))) score = 3;
+            else if (q.length >= 3 && name.includes(q)) score = 4;
+            if (score !== null) scored.push({ entry, score, i });
+        }
+        scored.sort((a, b) => a.score - b.score || a.i - b.i);
+        return scored.slice(0, 8).map(s => s.entry);
+    }
+
+    function attachAutocomplete(inputId) {
+        const input = document.getElementById(inputId);
+        const field = input.parentElement; // .search-field (position: relative)
+        const menu = document.createElement("div");
+        menu.className = "ac-menu";
+        field.appendChild(menu);
+
+        let items = [];
+        let active = -1;
+
+        function close() {
+            menu.style.display = "none";
+            items = [];
+            active = -1;
+        }
+
+        function select(ticker) {
+            input.value = ticker;
+            close();
+            calculateRisk(ticker);
+        }
+
+        function renderMenu() {
+            menu.innerHTML = "";
+            if (!items.length) { close(); return; }
+            items.forEach((entry, idx) => {
+                const row = document.createElement("div");
+                row.className = "ac-item" + (idx === active ? " active" : "");
+                const tk = document.createElement("span");
+                tk.className = "ac-ticker";
+                tk.textContent = entry.t;
+                const nm = document.createElement("span");
+                nm.className = "ac-name";
+                nm.textContent = entry.n;
+                row.appendChild(tk);
+                row.appendChild(nm);
+                // mousedown (not click) so selection wins the race against blur.
+                row.addEventListener("mousedown", ev => { ev.preventDefault(); select(entry.t); });
+                menu.appendChild(row);
+            });
+            menu.style.display = "block";
+        }
+
+        input.addEventListener("input", () => {
+            items = searchTickers(input.value);
+            active = -1;
+            renderMenu();
+        });
+
+        input.addEventListener("keydown", e => {
+            if (e.key === "ArrowDown" && items.length) {
+                e.preventDefault();
+                active = (active + 1) % items.length;
+                renderMenu();
+            } else if (e.key === "ArrowUp" && items.length) {
+                e.preventDefault();
+                active = (active - 1 + items.length) % items.length;
+                renderMenu();
+            } else if (e.key === "Enter") {
+                if (active >= 0 && items[active]) {
+                    e.preventDefault();
+                    select(items[active].t);
+                } else {
+                    close();
+                    analyzeFrom(inputId);
+                }
+            } else if (e.key === "Escape") {
+                close();
+            }
+        });
+
+        input.addEventListener("blur", () => setTimeout(close, 150));
+    }
+
+    ["heroInput", "savedInput", "resultsInput"].forEach(attachAutocomplete);
 
     async function calculateRisk(rawTicker) {
         const stock = (rawTicker || "").toUpperCase().trim();

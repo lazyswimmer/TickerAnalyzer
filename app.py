@@ -1,21 +1,58 @@
 import threading
+import time
 
 from flask import Flask, jsonify, request, render_template
-from extraTrashTester import get_stock_assessment_for_html, get_macro_regime
+from extraTrashTester import (
+    get_stock_assessment_for_html,
+    get_macro_regime,
+    get_sec_cik_map,
+)
 
 app = Flask(__name__)
 
-
-def _prewarm_macro_cache():
-    # get_macro_regime() is cached for hours but costs several seconds cold.
-    # Fetch it in the background at boot so the first visitor doesn't pay for it.
-    try:
-        get_macro_regime()
-    except Exception:
-        pass  # best-effort: the request path fetches it itself if this failed
+# Ticker autocomplete list, built from the SEC's official company_tickers.json
+# (every SEC-registered company: ticker + name, ordered by market cap, so the
+# search gets a free relevance tiebreak). Cached in memory and refreshed daily.
+_TICKER_LIST_CACHE = {"data": None, "fetched_at": 0.0}
+_TICKER_LIST_TTL = 24 * 60 * 60
+_TICKER_LIST_MAX = 8000  # cap the payload; nobody autocompletes the micro-cap tail
 
 
-threading.Thread(target=_prewarm_macro_cache, daemon=True).start()
+def _ticker_list():
+    now = time.time()
+    if (
+        _TICKER_LIST_CACHE["data"] is not None
+        and now - _TICKER_LIST_CACHE["fetched_at"] < _TICKER_LIST_TTL
+    ):
+        return _TICKER_LIST_CACHE["data"]
+
+    def display_name(title):
+        # SEC titles are inconsistently cased ("MICROSOFT CORP" vs "Apple Inc.");
+        # title-case the all-caps ones so the dropdown doesn't shout.
+        title = str(title)
+        return title.title() if title.isupper() else title
+
+    df = get_sec_cik_map()
+    records = [
+        {"t": row.ticker, "n": display_name(row.title)}
+        for row in df.head(_TICKER_LIST_MAX).itertuples()
+    ]
+    _TICKER_LIST_CACHE["data"] = records
+    _TICKER_LIST_CACHE["fetched_at"] = now
+    return records
+
+
+def _prewarm_caches():
+    # Both are cached for hours but cost seconds cold; fetch them in the
+    # background at boot so the first visitor doesn't pay for them.
+    for warm in (get_macro_regime, _ticker_list):
+        try:
+            warm()
+        except Exception:
+            pass  # best-effort: the request path fetches these itself if needed
+
+
+threading.Thread(target=_prewarm_caches, daemon=True).start()
 
 @app.route("/")
 def home():
@@ -25,6 +62,20 @@ def home():
 def health():
     # Cheap endpoint for uptime pings so the free instance never idles out.
     return "ok", 200
+
+@app.route("/api/tickers")
+def api_tickers():
+    # Compact [{t: ticker, n: name}] list for the search autocomplete. Matching
+    # happens client-side; this is fetched once per day per browser.
+    try:
+        data = _ticker_list()
+    except Exception:
+        return jsonify([]), 503
+
+    response = jsonify(data)
+    response.headers["Cache-Control"] = "public, max-age=86400"
+    return response
+
 
 @app.route("/api/assessment")
 def api_assessment():
