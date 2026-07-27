@@ -610,7 +610,7 @@
             <div class="details-body" id="categoryBreakdown"></div>
         </details>
 
-        <details>
+        <details id="peersDetails">
             <summary>Valuation vs. peers</summary>
             <div class="details-body">
                 <p class="peers-used" id="peersUsed"></p>
@@ -623,11 +623,28 @@
             </div>
         </details>
 
-        <details>
+        <details id="capitalDetails">
+            <summary>Capital allocation</summary>
+            <div class="details-body">
+                <p class="peers-used">How management spent shareholders' cash over the last 12 months.</p>
+                <table><tbody id="capitalTable"></tbody></table>
+            </div>
+        </details>
+
+        <details id="macroDetails">
             <summary>Macro context</summary>
             <div class="details-body">
                 <p class="macro-regime" id="macroRegime"></p>
                 <div id="macroNotes"></div>
+            </div>
+        </details>
+
+        <details id="kpiDetails">
+            <summary>What to watch for this industry</summary>
+            <div class="details-body">
+                <p class="peers-used" id="kpiIntro"></p>
+                <ul class="cat-notes" id="kpiList" style="margin-left: 18px;"></ul>
+                <p class="meaning" id="kpiNote" style="margin-top: 12px;"></p>
             </div>
         </details>
 
@@ -990,7 +1007,9 @@
         renderItems("risksList", data.risks, "No major risks flagged.");
         renderCategoryBreakdown(data);
         renderPeerComparison(data.peer_comparison);
+        renderCapitalAllocation(data.capital_allocation);
         renderMacroContext(data.macro_context);
+        renderIndustryKpis(data.industry_kpis);
         renderMetrics(data.metric_snapshot);
 
         document.getElementById("disclaimer").innerText = data.interpretation || "";
@@ -1059,15 +1078,20 @@
         });
     }
 
+    // Sections with nothing to show are hidden entirely — an accordion that
+    // opens onto "unavailable" reads as broken.
+    function toggleSection(id, hasContent) {
+        document.getElementById(id).style.display = hasContent ? "block" : "none";
+    }
+
     function renderPeerComparison(peer) {
         const table = document.getElementById("peerComparisonTable");
         const peersUsed = document.getElementById("peersUsed");
         table.innerHTML = "";
 
-        if (!peer || !peer.rows || peer.rows.length === 0) {
-            peersUsed.innerText = "Peer comparison unavailable for this stock.";
-            return;
-        }
+        const hasRows = peer && peer.rows && peer.rows.length > 0;
+        toggleSection("peersDetails", hasRows);
+        if (!hasRows) return;
 
         peersUsed.innerText =
             "Compared against " + peer.peers_used.length +
@@ -1085,15 +1109,52 @@
         });
     }
 
+    function renderCapitalAllocation(rows) {
+        const table = document.getElementById("capitalTable");
+        table.innerHTML = "";
+
+        const hasRows = Array.isArray(rows) && rows.length > 0;
+        toggleSection("capitalDetails", hasRows);
+        if (!hasRows) return;
+
+        rows.forEach(row => {
+            const tr = document.createElement("tr");
+            tr.appendChild(metricCell(row.label));
+            const td = document.createElement("td");
+            td.innerText = row.value;
+            tr.appendChild(td);
+            table.appendChild(tr);
+        });
+    }
+
+    function renderIndustryKpis(kpi) {
+        const hasKpis = kpi && Array.isArray(kpi.kpis) && kpi.kpis.length > 0;
+        toggleSection("kpiDetails", hasKpis);
+        if (!hasKpis) return;
+
+        document.getElementById("kpiIntro").innerText = kpi.industry
+            ? "The numbers that actually decide winners in " + kpi.industry + ":"
+            : "The numbers that actually decide winners in this industry:";
+
+        const list = document.getElementById("kpiList");
+        list.innerHTML = "";
+        kpi.kpis.forEach(k => {
+            const li = document.createElement("li");
+            li.innerText = k;
+            list.appendChild(li);
+        });
+
+        document.getElementById("kpiNote").innerText = kpi.note || "";
+    }
+
     function renderMacroContext(macro) {
         const regime = document.getElementById("macroRegime");
         const notesBox = document.getElementById("macroNotes");
         notesBox.innerHTML = "";
 
-        if (!macro) {
-            regime.innerText = "Macro context unavailable.";
-            return;
-        }
+        const hasMacro = macro && macro.regime && macro.regime !== "unavailable";
+        toggleSection("macroDetails", hasMacro);
+        if (!hasMacro) return;
 
         let regimeText = "Current regime: " + (macro.regime || "unavailable");
         if (macro.risk_adjustment) {

@@ -6,6 +6,9 @@ pandas
 requests
 yfinance
 financedatabase
+# FRED macro data (macro regime / macro context). Without this the deployed
+# server silently runs with no macro overlay — it is NOT optional in production.
+pandas_datareader
 
 # Production WSGI server for hosting the website (not needed locally).
 gunicorn

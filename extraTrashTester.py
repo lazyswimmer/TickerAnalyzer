@@ -550,6 +550,40 @@ def get_macro_regime() -> Dict[str, Any]:
 # 5. Industry and competitor data
 # ============================================================
 
+def _loose_taxonomy_match(series: pd.Series, label: Optional[str]) -> Optional[str]:
+    """Find the closest value in a financedatabase classification column for a
+    label from yfinance's different taxonomy (e.g. yfinance 'Technology' →
+    financedatabase 'Information Technology'). Tries exact (case-insensitive),
+    then substring containment, then shared-word overlap. Returns a value from
+    the series' own vocabulary, or None."""
+    if not label:
+        return None
+    target = str(label).lower().strip()
+    try:
+        values = [str(v) for v in series.dropna().unique()]
+    except Exception:
+        return None
+
+    for v in values:
+        if v.lower() == target:
+            return v
+    for v in values:
+        vl = v.lower()
+        if target in vl or vl in target:
+            return v
+
+    def tokens(text: str) -> set:
+        return {t for t in text.replace("&", " ").replace(",", " ").replace("-", " ").split() if len(t) > 4}
+
+    target_tokens = tokens(target)
+    best, best_overlap = None, 0
+    for v in values:
+        overlap = len(target_tokens & tokens(v.lower()))
+        if overlap > best_overlap:
+            best, best_overlap = v, overlap
+    return best
+
+
 def retrieve_industry_competitor_data(
     ticker: str,
     max_competitors: int = 30
@@ -578,9 +612,18 @@ def retrieve_industry_competitor_data(
         fdb_cap = row.get("market_cap")
 
     if fdb_sector is None and fdb_industry is None:
-        info = get_ticker(ticker).info
-        fdb_sector = info.get("sector")
-        fdb_industry = info.get("industry")
+        # Ticker not in financedatabase (common for recent listings/relistings,
+        # e.g. SNDK after the 2025 spin-off). yfinance's sector/industry labels
+        # use a different taxonomy than financedatabase's, so an exact filter
+        # would match nothing — translate them into financedatabase's own
+        # vocabulary with a loose match instead.
+        info = safe_call(lambda: get_ticker(ticker).info, label="peer_fallback_info")
+        if not isinstance(info, dict):
+            info = {}
+        if "sector" in df.columns:
+            fdb_sector = _loose_taxonomy_match(df["sector"], info.get("sector"))
+        if "industry" in df.columns:
+            fdb_industry = _loose_taxonomy_match(df["industry"], info.get("industry"))
 
     def count_excl(frame):
         return sum(1 for s in frame.index if str(s).upper() != ticker)
@@ -1590,6 +1633,7 @@ def comprehensive_stock_assessment(
     include_sec: bool = True,
     include_options: bool = True,
     current_holdings: Optional[List[str]] = None,
+    lean: bool = False,
 ) -> Dict[str, Any]:
     ticker = ticker.upper().strip()
 
@@ -1606,32 +1650,41 @@ def comprehensive_stock_assessment(
     # flakiness we just removed. They are cheap anyway (~26s combined); the real
     # cost was the macro/FRED source, which is parallelized internally where it is
     # safe to do so (FRED is a separate, robust backend). See retrieve_macro_data.
+    # Sources consumed by the scored summary / web output.
     tasks = {
         "quantitative": lambda: retrieve_quantitative_data(ticker),
-        "news_and_sentiment": lambda: retrieve_basic_news_sentiment(ticker),
-        "technical": lambda: retrieve_technical_indicators(ticker),
-        "broad_market": retrieve_broad_market_data,
         # NB: industry/competitor data is intentionally not fetched as its own
         # source here. retrieve_peer_relative_valuation() already calls
         # retrieve_industry_competitor_data() internally to build the peer set, so a
         # standalone fetch was pure duplication (and ~7s of it). The valuable output
         # of that data — the peer-median comparison — is surfaced via build_peer_comparison().
-        "risk_factors": lambda: retrieve_risk_factors(ticker),
         "analyst_expectations": lambda: retrieve_analyst_expectations(ticker),
         "peer_relative_valuation": lambda: retrieve_peer_relative_valuation(ticker),
         "capital_allocation": lambda: analyze_capital_allocation(ticker),
         "earnings_quality": lambda: analyze_earnings_quality(ticker),
         "balance_sheet_risk": lambda: analyze_balance_sheet_risk(ticker),
-        "ownership_and_insiders": lambda: retrieve_ownership_and_insider_data(ticker),
         "short_interest": lambda: retrieve_short_interest_data(ticker),
         "industry_kpi_framework": lambda: identify_industry_kpis(ticker),
         "governance": lambda: retrieve_governance_data(ticker),
-        "geographic_regulatory_exposure": lambda: retrieve_exposure_checklist(ticker),
         "historical_performance": lambda: analyze_historical_performance(ticker),
-        "portfolio_context": lambda: analyze_portfolio_context(ticker, current_holdings),
         "edge": lambda: assess_stock_edge(ticker),
-        "niche": lambda: check_stock_niche(ticker),
     }
+
+    # Sources fetched for the CLI's full report but consumed by nothing in the
+    # scored summary or web JSON. The web path (lean=True) skips them — they were
+    # costing ~10-20s per request with zero effect on the displayed result.
+    # If one of these gets wired into the output later, move it up into `tasks`.
+    if not lean:
+        tasks.update({
+            "news_and_sentiment": lambda: retrieve_basic_news_sentiment(ticker),
+            "technical": lambda: retrieve_technical_indicators(ticker),
+            "broad_market": retrieve_broad_market_data,
+            "risk_factors": lambda: retrieve_risk_factors(ticker),
+            "ownership_and_insiders": lambda: retrieve_ownership_and_insider_data(ticker),
+            "geographic_regulatory_exposure": lambda: retrieve_exposure_checklist(ticker),
+            "portfolio_context": lambda: analyze_portfolio_context(ticker, current_holdings),
+            "niche": lambda: check_stock_niche(ticker),
+        })
 
     if include_macro:
         tasks["macro"] = retrieve_macro_data
@@ -2132,6 +2185,13 @@ METRIC_GLOSSARY = {
     "Max Drawdown": "The worst peak-to-trough price drop over the period.",
     "Current RSI": "Relative Strength Index (0-100): above ~70 looks overbought, below ~30 oversold.",
     "Current Drawdown": "How far the price currently sits below its recent peak.",
+    "Buybacks (TTM)": "Cash spent repurchasing its own shares over the last 12 months — shrinks the share count, boosting each remaining share's claim.",
+    "Dividends Paid (TTM)": "Cash paid out to shareholders over the last 12 months.",
+    "Capital Expenditure (TTM)": "Cash reinvested in the business (equipment, facilities, technology) over the last 12 months.",
+    "Stock-Based Compensation (TTM)": "Pay issued as stock over the last 12 months — a real cost that dilutes existing shareholders.",
+    "SBC % of Revenue (TTM)": "Stock pay as a share of revenue; above ~10% means meaningful ongoing dilution.",
+    "Cash Conversion (OCF ÷ Net Income)": "How much of reported profit turns into actual cash; near or above 1 is healthy, well below 1 is a red flag.",
+    "Free Cash Flow (TTM)": "Cash left after running and investing in the business over the last 12 months — what could fund dividends, buybacks, or debt paydown.",
 }
 
 # Short parenthetical glosses injected on first use of an abbreviation in prose
@@ -2719,6 +2779,53 @@ def build_investor_fit(summary):
         caveat,
     ]
 
+def build_capital_allocation_view(assessment) -> List[Dict[str, str]]:
+    """Format the capital-allocation source as display rows for the web UI.
+    Cash outflows (buybacks, dividends, capex) are reported negative in the
+    statement; show them as positive spend amounts."""
+    cap = assessment.get("capital_allocation")
+    if not isinstance(cap, dict) or "error" in cap:
+        return []
+
+    def outflow(value):
+        return money(abs(value)) if value is not None else None
+
+    rows = [
+        ("Buybacks (TTM)", outflow(cap.get("buybacks_latest"))),
+        ("Dividends Paid (TTM)", outflow(cap.get("dividends_paid_latest"))),
+        ("Capital Expenditure (TTM)", outflow(cap.get("capital_expenditure_latest"))),
+        ("Stock-Based Compensation (TTM)", outflow(cap.get("stock_based_compensation_latest"))),
+        ("SBC % of Revenue (TTM)", pct(cap.get("sbc_as_percent_of_revenue"))),
+        ("Cash Conversion (OCF ÷ Net Income)", num(cap.get("cash_conversion_ocf_to_net_income"))),
+        ("Free Cash Flow (TTM)", money(cap.get("free_cash_flow_from_info"))),
+    ]
+    return [
+        {"label": label, "value": value}
+        for label, value in rows
+        if value not in (None, "N/A")
+    ]
+
+
+def build_industry_kpi_view(assessment) -> Optional[Dict[str, Any]]:
+    """Industry-specific KPIs worth researching, for the 'what to watch' panel.
+    Returns None when we have no suggestions for this industry."""
+    kpi = assessment.get("industry_kpi_framework")
+    if not isinstance(kpi, dict) or "error" in kpi:
+        return None
+    suggested = kpi.get("suggested_kpis_to_research") or []
+    if not suggested:
+        return None
+    return {
+        "industry": kpi.get("industry") or kpi.get("sector"),
+        "kpis": suggested,
+        "note": (
+            "Our score can't see these — they come from filings, earnings decks, "
+            "and investor presentations. If you research one thing beyond this "
+            "page, make it these."
+        ),
+    }
+
+
 def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
     """
     Runs the full stock assessment and returns the same information that
@@ -2730,7 +2837,16 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
     consumes it. Skipping it cuts the web request time by more than half with no
     change to the displayed result. (The CLI still fetches it via include_macro.)
     """
-    assessment = comprehensive_stock_assessment(ticker, include_macro=False)
+    # lean=True + the include flags skip every source the web output never
+    # reads (news, technical, broad market, SEC, options, ownership, ...) —
+    # a 10-20s saving per request with an identical displayed result.
+    assessment = comprehensive_stock_assessment(
+        ticker,
+        include_macro=False,
+        include_sec=False,
+        include_options=False,
+        lean=True,
+    )
     summary = generate_scored_summary(assessment)
 
     # Translate jargon into plain language before anything reads the notes, so the
@@ -2773,6 +2889,8 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
         "category_interpretations": category_interpretations,
         "peer_comparison": peer_comparison,
         "macro_context": macro_ctx,
+        "capital_allocation": build_capital_allocation_view(assessment),
+        "industry_kpis": build_industry_kpi_view(assessment),
         "interpretation": (
             "This is a generalized rule-based screen, not a buy/sell recommendation. "
             "Use it to identify where deeper research is needed: valuation, balance sheet, "
