@@ -847,6 +847,11 @@
 
     ["heroInput", "savedInput", "resultsInput"].forEach(attachAutocomplete);
 
+    // Deep link: /?ticker=AAPL (used by the browser extension and shared
+    // links) starts the analysis immediately on page load.
+    const initialTicker = new URLSearchParams(window.location.search).get("ticker");
+    if (initialTicker) calculateRisk(initialTicker);
+
     async function calculateRisk(rawTicker) {
         const stock = (rawTicker || "").toUpperCase().trim();
         const status = document.getElementById("status");
@@ -886,6 +891,9 @@
                 renderAssessment(data);
                 status.innerHTML = "";
                 output.style.display = "block";
+                // Make the result linkable: /?ticker=AAPL reruns this analysis,
+                // so the URL can be shared (and the extension deep-links to it).
+                history.replaceState(null, "", "?ticker=" + encodeURIComponent(stock));
                 return;
 
             } catch (error) {

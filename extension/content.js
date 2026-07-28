@@ -180,7 +180,7 @@
       <button class="expand">Show full details ▾</button>
       ${fullReport(data)}
       <div class="foot">Generated in your browser by Macro Risk Analyzer Lite<br>
-        <a href="https://tickeranalyzer.onrender.com" target="_blank" rel="noopener">Get the full in-depth analysis &rarr;</a></div>`;
+        <a href="https://tickeranalyzer.onrender.com/?ticker=${encodeURIComponent(data.ticker)}" target="_blank" rel="noopener">Get the full in-depth analysis of ${esc(data.ticker)} &rarr;</a></div>`;
 
     const full = body().querySelector(".full");
     const btn = body().querySelector(".expand");
