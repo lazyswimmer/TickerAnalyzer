@@ -83,25 +83,73 @@ def get_ticker(ticker: str) -> yf.Ticker:
     return cached
 
 
-def prime_ticker(ticker: str, attempts: int = 3, delay: float = 1.0) -> None:
-    """Warm up the yfinance session for ``ticker`` before the real work starts.
+# ------------------------------------------------------------
+# Cached, throttled access to Yahoo's quoteSummary (.info) endpoint
+# ------------------------------------------------------------
+# .info is the most aggressively rate-limited Yahoo endpoint, and a full
+# assessment used to fire ~20 uncached calls at it in a tight burst (the
+# target plus every peer snapshot). From a cloud server's shared IP that
+# eventually trips Yahoo's throttle — at which point every .info-backed field
+# (name, market cap, P/E, margins, the whole peer comparison) silently
+# vanishes while statements/prices/FRED keep working. Defenses, in order:
+#   1. cache results per process for an hour — peer sets overlap heavily
+#      across analyses, so repeat traffic drops ~90%
+#   2. space real fetches out and retry with backoff instead of bursting
+#   3. circuit-break after repeated failures so a blocked period degrades
+#      fast instead of stacking retry sleeps
+_INFO_CACHE: Dict[str, Any] = {}
+_INFO_CACHE_TTL = 60 * 60
+_INFO_PACING = {"last_fetch": 0.0}
+_INFO_MIN_INTERVAL = 0.35
+_INFO_BREAKER = {"consecutive_failures": 0, "cooldown_until": 0.0}
 
-    Retries the cold Yahoo crumb/cookie handshake so the assessment doesn't fail
-    the first time a ticker is entered. Never raises: if priming ultimately fails,
-    the per-source safe_call handling still produces a (partial) result.
-    """
+
+def get_cached_info(ticker: str) -> Dict[str, Any]:
+    """The one sanctioned way to read .info. Returns {} when Yahoo won't
+    cooperate — callers already treat missing fields as absent data."""
     ticker = ticker.upper().strip()
-    for attempt in range(attempts):
+    now = time.time()
+
+    hit = _INFO_CACHE.get(ticker)
+    if hit is not None and now - hit[0] < _INFO_CACHE_TTL:
+        return hit[1]
+
+    if now < _INFO_BREAKER["cooldown_until"]:
+        return {}
+
+    for attempt in range(3):
+        pause = _INFO_PACING["last_fetch"] + _INFO_MIN_INTERVAL - time.time()
+        if pause > 0:
+            time.sleep(pause)
+        _INFO_PACING["last_fetch"] = time.time()
         try:
             info = get_ticker(ticker).info
-            if info and len(info) > 1:
-                return
+            # A throttled fetch often returns a near-empty dict rather than
+            # raising; only accept a substantive payload.
+            if isinstance(info, dict) and len(info) > 5:
+                _INFO_CACHE[ticker] = (time.time(), info)
+                _INFO_BREAKER["consecutive_failures"] = 0
+                return info
         except Exception:
             pass
-        # Drop any cached empty/failed Ticker so the next attempt fetches fresh.
+        # Drop the possibly-poisoned Ticker so a retry redoes the handshake.
         _TICKER_CACHE.pop(ticker, None)
-        if attempt < attempts - 1:
-            time.sleep(delay)
+        if attempt < 2:
+            time.sleep(1.0 * (attempt + 1))
+
+    _INFO_BREAKER["consecutive_failures"] += 1
+    if _INFO_BREAKER["consecutive_failures"] >= 3:
+        _INFO_BREAKER["cooldown_until"] = time.time() + 120
+        print("[yahoo-info] quoteSummary appears throttled; failing fast for 2 minutes")
+    return {}
+
+
+def prime_ticker(ticker: str, attempts: int = 3, delay: float = 1.0) -> None:
+    """Warm up the yfinance session for ``ticker`` before the real work starts.
+    Never raises: if priming fails, per-source safe_call handling still
+    produces a (partial) result. Delegates to get_cached_info, which owns
+    retry/backoff/caching for the .info endpoint."""
+    get_cached_info(ticker)
 
 
 def clean_number(value: Any) -> Optional[float]:
@@ -267,7 +315,7 @@ def retrieve_quantitative_data(ticker: str) -> Dict[str, Any]:
 
     return {
         "price_history": stock.history(period="5y"),
-        "info": stock.info,
+        "info": get_cached_info(ticker),
         "balance_sheet": stock.balance_sheet,
         "income_statement": stock.income_stmt,
         "cashflow": stock.cashflow,
@@ -656,9 +704,7 @@ def retrieve_industry_competitor_data(
         # use a different taxonomy than financedatabase's, so an exact filter
         # would match nothing — translate them into financedatabase's own
         # vocabulary with a loose match instead.
-        info = safe_call(lambda: get_ticker(ticker).info, label="peer_fallback_info")
-        if not isinstance(info, dict):
-            info = {}
+        info = get_cached_info(ticker)
         if "sector" in df.columns:
             fdb_sector = _loose_taxonomy_match(df["sector"], info.get("sector"))
         if "industry" in df.columns:
@@ -848,7 +894,7 @@ def retrieve_analyst_expectations(ticker: str) -> Dict[str, Any]:
             label="calendar",
         ),
         "analyst_price_targets_from_info": {
-            k: stock.info.get(k)
+            k: get_cached_info(ticker).get(k)
             for k in [
                 "targetHighPrice",
                 "targetLowPrice",
@@ -867,7 +913,7 @@ def retrieve_analyst_expectations(ticker: str) -> Dict[str, Any]:
 # ============================================================
 
 def get_company_snapshot(ticker: str) -> Dict[str, Any]:
-    info = get_ticker(ticker).info
+    info = get_cached_info(ticker)
 
     fields = [
         "shortName",
@@ -983,7 +1029,7 @@ def analyze_capital_allocation(ticker: str) -> Dict[str, Any]:
     cashflow = stock.cashflow
     income = stock.income_stmt
     balance = stock.balance_sheet
-    info = stock.info
+    info = get_cached_info(ticker)
     q_cashflow = stock.quarterly_cashflow
     q_income = stock.quarterly_financials
     q_balance = stock.quarterly_balance_sheet
@@ -1086,7 +1132,7 @@ def analyze_earnings_quality(ticker: str) -> Dict[str, Any]:
 def analyze_balance_sheet_risk(ticker: str) -> Dict[str, Any]:
     stock = get_ticker(ticker)
 
-    info = stock.info
+    info = get_cached_info(ticker)
     balance = stock.balance_sheet
     income = stock.income_stmt
     q_balance = stock.quarterly_balance_sheet
@@ -1246,7 +1292,7 @@ def retrieve_options_market_data(
 # ============================================================
 
 def retrieve_short_interest_data(ticker: str) -> Dict[str, Any]:
-    info = get_ticker(ticker).info
+    info = get_cached_info(ticker)
 
     fields = [
         "shortRatio",
@@ -1276,7 +1322,7 @@ def identify_industry_kpis(ticker: str) -> Dict[str, Any]:
     Most of these are not standardized in Yahoo Finance and require filings,
     earnings decks, or specialized datasets.
     """
-    info = get_ticker(ticker).info
+    info = get_cached_info(ticker)
 
     sector = str(info.get("sector", "")).lower()
     industry = str(info.get("industry", "")).lower()
@@ -1413,7 +1459,7 @@ def identify_industry_kpis(ticker: str) -> Dict[str, Any]:
 
 def retrieve_governance_data(ticker: str) -> Dict[str, Any]:
     stock = get_ticker(ticker)
-    info = stock.info
+    info = get_cached_info(ticker)
 
     governance_fields = [
         "auditRisk",
@@ -2904,9 +2950,7 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
 
     # Company display name for the UI (e.g. saved-analysis cards). The Ticker is
     # already cached from the assessment run, so .info costs no extra network call.
-    info = safe_call(lambda: get_ticker(summary["ticker"]).info, label="company_name")
-    if not isinstance(info, dict):
-        info = {}
+    info = get_cached_info(summary["ticker"])
     company_name = info.get("shortName") or info.get("longName") or ""
 
     return make_json_safe({
