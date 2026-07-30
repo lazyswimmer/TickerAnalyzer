@@ -79,6 +79,12 @@
     .cat-notes { margin: 6px 0 0 16px; padding: 0; color: #5b636b; font-size: 13px; }
     .regime { background: #f2f6fb; border: 1px solid #d6e2f0; border-radius: 8px; padding: 9px 11px; }
     .err { color: #d6453d; font-weight: 600; }
+    .quote { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 2px 0 6px; }
+    .qprice { font-weight: 700; font-size: 16px; }
+    .qchg { font-weight: 600; font-size: 12.5px; }
+    .qchg.up { color: #1a9d6a; }
+    .qchg.down { color: #d6453d; }
+    .qmeta { color: #9aa1a8; font-size: 11px; }
     .foot { margin-top: 14px; color: #9aa1a8; font-size: 12px; text-align: center; }
     .foot a { color: #2563eb; text-decoration: none; font-weight: 600; }
     .foot a:hover { text-decoration: underline; }
@@ -155,6 +161,21 @@
     </div>`;
   }
 
+  function quoteLine(q) {
+    if (!q || q.price == null) return "";
+    const sym = q.currency === "USD" ? "$" : (q.currency || "") + " ";
+    const price = sym + q.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    let chg = "";
+    if (q.change_pct != null) {
+      const up = q.change_pct >= 0;
+      chg = `<span class="qchg ${up ? "up" : "down"}">${up ? "▲ +" : "▼ "}${(q.change_pct * 100).toFixed(2)}%</span>`;
+    }
+    const when = q.time
+      ? new Date(q.time * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+      : "";
+    return `<div class="quote"><span class="qprice">${esc(price)}</span>${chg}<span class="qmeta">delayed${when ? " · " + esc(when) : ""}</span></div>`;
+  }
+
   function showResult(data) {
     ensurePanel();
     const risk = data.generalized_risk_score;
@@ -165,6 +186,7 @@
 
     body().innerHTML = `
       <div class="ticker">${esc(data.ticker)} — Macro Risk Analysis</div>
+      ${quoteLine(data.quote)}
       <div class="verdict">${esc(data.verdict || "")}</div>
       <div class="riskrow"><span class="score lvl-${lv}">${esc(risk)}<span>/10</span></span></div>
       <div class="risklabel lvl-${lv}">${esc(data.risk_label || "")} risk</div>

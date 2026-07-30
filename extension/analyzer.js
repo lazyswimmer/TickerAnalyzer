@@ -341,8 +341,17 @@ export async function analyzeTicker(ticker) {
     "Max Drawdown": pct(tech.max_drawdown), "Current RSI": num(tech.current_RSI),
   };
 
+  // Delayed quote for the card header — same price module already fetched,
+  // zero extra requests. Yahoo quotes are exchange-delayed; label them so.
+  const quote = raw(pr.regularMarketPrice) != null ? {
+    price: raw(pr.regularMarketPrice),
+    change_pct: raw(pr.regularMarketChangePercent),
+    currency: pr.currency || "USD",
+    time: raw(pr.regularMarketTime),
+  } : null;
+
   return {
-    success: true, ticker, verdict,
+    success: true, ticker, quote, verdict,
     overall_quality_score: quality, generalized_risk_score: risk, risk_label: riskLabel,
     investor_fit: buildInvestorFit(ticker, category_scores, risk, riskLabel),
     strengths, risks,
