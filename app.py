@@ -1,3 +1,4 @@
+import re
 import threading
 import time
 
@@ -85,6 +86,16 @@ def api_assessment():
         return jsonify({
             "success": False,
             "error": "Please enter a ticker."
+        }), 400
+
+    # Cheap format gate: real US tickers are 1-10 chars of letters/digits with
+    # optional . or - (BRK.B, FTV-PA). Anything else skips Yahoo entirely.
+    if not re.fullmatch(r"[A-Z0-9.\-]{1,10}", ticker):
+        return jsonify({
+            "success": False,
+            "ticker": ticker,
+            "error": f'"{ticker}" doesn\'t look like a stock ticker. '
+                     "Try a symbol like AAPL or MSFT.",
         }), 400
 
     try:

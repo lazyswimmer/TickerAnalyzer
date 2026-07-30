@@ -2922,6 +2922,26 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
     consumes it. Skipping it cuts the web request time by more than half with no
     change to the displayed result. (The CLI still fetches it via include_macro.)
     """
+    # Reject nonexistent tickers before the expensive pipeline runs. Without
+    # this, a typo burned ~18s of doomed Yahoo calls, returned a fabricated
+    # "success" score built from zero data, and — because the dead .info
+    # attempts look identical to throttling — tripped the circuit breaker,
+    # degrading real requests for minutes. The probe uses the chart endpoint
+    # (cheap, and on a separate rate-limit budget from .info), so a fake
+    # ticker never touches the breaker.
+    ticker = ticker.upper().strip()
+    probe = safe_call(lambda: get_ticker(ticker).history(period="5d"), label="existence_probe")
+    if not isinstance(probe, pd.DataFrame) or probe.empty:
+        return {
+            "success": False,
+            "ticker": ticker,
+            "error": (
+                f"We couldn't find a stock with the ticker \"{ticker}\". "
+                "Double-check the symbol, or start typing in the search box "
+                "and pick from the suggestions."
+            ),
+        }
+
     # lean=True + the include flags skip every source the web output never
     # reads (news, technical, broad market, SEC, options, ownership, ...) —
     # a 10-20s saving per request with an identical displayed result.
