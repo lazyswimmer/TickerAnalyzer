@@ -2973,6 +2973,32 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
     info = get_cached_info(summary["ticker"])
     company_name = info.get("shortName") or info.get("longName") or ""
 
+    # Data-sufficiency gate. Price history alone can exist for shell companies,
+    # SPAC remnants, and thinly traded OTC listings (and .info can vanish during
+    # a Yahoo throttle). A risk score computed with zero fundamentals is
+    # fabrication, not analysis — refuse honestly instead of rendering it.
+    snapshot = summary["metric_snapshot"]
+    fundamentals_present = sum(
+        1
+        for key in (
+            "Market Cap", "Trailing P/E", "Forward P/E", "Operating Margin",
+            "Gross Margin", "Revenue Growth", "Sector",
+        )
+        if snapshot.get(key) not in (None, "N/A")
+    )
+    if not company_name and fundamentals_present == 0:
+        return {
+            "success": False,
+            "ticker": summary["ticker"],
+            "error": (
+                f"\"{summary['ticker']}\" trades, but we couldn't find enough company "
+                "fundamentals to build a meaningful analysis — it may be a shell "
+                "company or a very thinly traded listing. If you believe this is a "
+                "real company, try again in a few minutes; our data source may be "
+                "temporarily limited."
+            ),
+        }
+
     return make_json_safe({
         "success": True,
         "ticker": summary["ticker"],
