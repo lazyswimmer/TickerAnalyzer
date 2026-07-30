@@ -44,9 +44,13 @@ def _ticker_list():
 
 
 def _prewarm_caches():
-    # Both are cached for hours but cost seconds cold; fetch them in the
-    # background at boot so the first visitor doesn't pay for them.
-    for warm in (get_macro_regime, _ticker_list):
+    # All cached for hours but cost seconds-to-minutes cold; fetch in the
+    # background at boot so the first visitor doesn't pay for them. The dummy
+    # assessment matters most: the true first analysis on a cold instance can
+    # exceed the gunicorn timeout (session handshakes + peer universe +
+    # statement parsing on a small shared CPU), so run one before users do.
+    # It also fills the .info cache with mega-cap peers most analyses share.
+    for warm in (get_macro_regime, _ticker_list, lambda: get_stock_assessment_for_html("AAPL")):
         try:
             warm()
         except Exception:
