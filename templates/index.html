@@ -376,6 +376,24 @@
         .hero h2 { font-size: 22px; letter-spacing: -0.01em; margin: 0 0 6px; }
         .hero .verdict { color: var(--muted); font-size: 16px; }
 
+        .quote-line {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin: 2px 0 8px;
+        }
+        .quote-price {
+            font-family: 'IBM Plex Mono', monospace;
+            font-weight: 700;
+            font-size: 20px;
+            font-variant-numeric: tabular-nums;
+        }
+        .quote-change { font-weight: 600; font-size: 14px; }
+        .quote-change.up { color: var(--green); }
+        .quote-change.down { color: var(--red); }
+        .quote-meta { color: var(--lighter); font-size: 12px; }
+
         .save-btn {
             margin-top: 12px;
             border: 1px solid var(--border);
@@ -609,6 +627,7 @@
         <div class="card hero" style="margin-top: 0;">
             <div class="hero-left">
                 <h2 id="title"></h2>
+                <div class="quote-line" id="quoteLine" style="display: none;"></div>
                 <div class="verdict" id="verdict"></div>
                 <button id="saveBtn" class="save-btn" onclick="saveCurrentAnalysis()">&#9734; Save this analysis</button>
             </div>
@@ -1082,7 +1101,11 @@
             verdict.textContent = entry.data.verdict || "";
             const date = document.createElement("div");
             date.className = "saved-date";
-            date.textContent = "Saved " + new Date(entry.savedAt).toLocaleDateString();
+            const savedQuote = entry.data.quote;
+            date.textContent = "Saved " + new Date(entry.savedAt).toLocaleDateString()
+                + (savedQuote && savedQuote.price != null
+                    ? " · " + formatQuotePrice(savedQuote) + " then"
+                    : "");
             infoBox.appendChild(titleRow);
             infoBox.appendChild(verdict);
             infoBox.appendChild(date);
@@ -1108,6 +1131,47 @@
 
     // ---- Results rendering ----
     let GLOSSARY = {};
+
+    function formatQuotePrice(q) {
+        const symbol = q.currency === "USD" ? "$" : (q.currency || "") + " ";
+        return symbol + q.price.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        });
+    }
+
+    function renderQuote(q) {
+        const el = document.getElementById("quoteLine");
+        el.innerHTML = "";
+        if (!q || q.price == null) {
+            el.style.display = "none";
+            return;
+        }
+        el.style.display = "flex";
+
+        const price = document.createElement("span");
+        price.className = "quote-price";
+        price.textContent = formatQuotePrice(q);
+        el.appendChild(price);
+
+        if (q.change_pct != null) {
+            const up = q.change_pct >= 0;
+            const change = document.createElement("span");
+            change.className = "quote-change " + (up ? "up" : "down");
+            change.textContent = (up ? "▲ +" : "▼ ")
+                + (q.change_pct * 100).toFixed(2) + "%";
+            el.appendChild(change);
+        }
+
+        const meta = document.createElement("span");
+        meta.className = "quote-meta";
+        meta.textContent = q.time
+            ? "delayed · as of " + new Date(q.time * 1000).toLocaleString([], {
+                  month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
+              })
+            : "delayed quote";
+        el.appendChild(meta);
+    }
 
     function renderTakeaway(data) {
         const box = document.getElementById("investorFit");
@@ -1148,6 +1212,7 @@
             ? data.ticker + " · " + data.company_name
             : data.ticker + " — Macro Risk Analysis";
         document.getElementById("title").innerText = heading;
+        renderQuote(data.quote);
         document.getElementById("verdict").innerText = data.verdict;
 
         const riskScore = document.getElementById("riskScore");

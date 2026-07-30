@@ -2999,10 +2999,34 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
             ),
         }
 
+    # Delayed quote for display. Comes from the same cached .info the analysis
+    # already fetched (zero extra network cost). Yahoo's quote data is
+    # exchange-delayed and our cache adds up to an hour — the UI labels it as
+    # delayed with a timestamp; deliberately NOT a live-updating price.
+    current_price = clean_number(
+        info.get("currentPrice") or info.get("regularMarketPrice")
+    )
+    previous_close = clean_number(
+        info.get("regularMarketPreviousClose") or info.get("previousClose")
+    )
+    quote = None
+    if current_price is not None:
+        quote = {
+            "price": current_price,
+            "change_pct": (
+                (current_price - previous_close) / previous_close
+                if previous_close
+                else None
+            ),
+            "currency": info.get("currency") or "USD",
+            "time": info.get("regularMarketTime"),
+        }
+
     return make_json_safe({
         "success": True,
         "ticker": summary["ticker"],
         "company_name": company_name,
+        "quote": quote,
         "verdict": summary["verdict"],
         "overall_quality_score": summary["overall_quality_score"],
         "generalized_risk_score": summary["generalized_risk_score"],
