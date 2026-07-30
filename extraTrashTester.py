@@ -2987,15 +2987,31 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
         if snapshot.get(key) not in (None, "N/A")
     )
     if not company_name and fundamentals_present == 0:
+        if not info:
+            # get_cached_info returned nothing at all — that's OUR fetch
+            # failing (throttle/outage), which says nothing about the company.
+            # SK hynix ($1T market cap) once got the shell-company message
+            # because of this exact ambiguity. Own the failure instead.
+            return {
+                "success": False,
+                "ticker": summary["ticker"],
+                "error": (
+                    f"We couldn't retrieve company data for \"{summary['ticker']}\" "
+                    "right now — our data source appears to be temporarily "
+                    "limited. This usually clears up quickly; please try again "
+                    "in a minute or two."
+                ),
+            }
+        # Yahoo answered with real data for this symbol, and it still contains
+        # no name and no fundamentals — genuinely nothing to analyze.
         return {
             "success": False,
             "ticker": summary["ticker"],
             "error": (
-                f"\"{summary['ticker']}\" trades, but we couldn't find enough company "
-                "fundamentals to build a meaningful analysis — it may be a shell "
-                "company or a very thinly traded listing. If you believe this is a "
-                "real company, try again in a few minutes; our data source may be "
-                "temporarily limited."
+                f"\"{summary['ticker']}\" trades, but there isn't enough company "
+                "fundamental data available to build a meaningful analysis — "
+                "this is common for shell companies and very thinly traded "
+                "listings."
             ),
         }
 
