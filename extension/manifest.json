@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Macro Risk Analyzer Lite",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Highlight a stock ticker on any page and get an instant in-browser risk & quality score. No setup, no server.",
   "permissions": ["contextMenus", "scripting", "activeTab"],
   "host_permissions": [

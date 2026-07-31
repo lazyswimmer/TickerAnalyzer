@@ -61,19 +61,32 @@ function humanize(t) {
 // ---------- Yahoo data (cookie -> crumb -> quoteSummary -> chart) ----------
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
+// Every network call gets a hard deadline. A fetch that FAILS is handled by
+// the .catch fallbacks — but a fetch that HANGS (FRED outages do this) used
+// to stall the whole card for as long as the browser allowed.
+async function fetchWithTimeout(url, opts = {}, ms = 15000) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getCrumb() {
   // Visiting this seeds the Yahoo cookie in the browser jar; the SW then sends it
   // automatically (host_permissions cover the domains).
-  await fetch("https://fc.yahoo.com", { headers: { "User-Agent": UA }, credentials: "include" }).catch(() => {});
-  const res = await fetch("https://query1.finance.yahoo.com/v1/test/getcrumb",
-    { headers: { "User-Agent": UA }, credentials: "include" });
+  await fetchWithTimeout("https://fc.yahoo.com", { headers: { "User-Agent": UA }, credentials: "include" }, 8000).catch(() => {});
+  const res = await fetchWithTimeout("https://query1.finance.yahoo.com/v1/test/getcrumb",
+    { headers: { "User-Agent": UA }, credentials: "include" }, 8000);
   return (await res.text()).trim();
 }
 
 async function fetchQuoteSummary(ticker, crumb) {
   const modules = ["price", "summaryDetail", "defaultKeyStatistics", "financialData", "assetProfile"].join(",");
   const url = `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=${modules}&crumb=${encodeURIComponent(crumb)}`;
-  const res = await fetch(url, { headers: { "User-Agent": UA }, credentials: "include" });
+  const res = await fetchWithTimeout(url, { headers: { "User-Agent": UA }, credentials: "include" });
   const json = await res.json();
   const result = json?.quoteSummary?.result?.[0];
   if (!result) throw new Error("No data for " + ticker);
@@ -82,7 +95,7 @@ async function fetchQuoteSummary(ticker, crumb) {
 
 async function fetchCloses(ticker) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=5y&interval=1d`;
-  const res = await fetch(url, { headers: { "User-Agent": UA }, credentials: "include" });
+  const res = await fetchWithTimeout(url, { headers: { "User-Agent": UA }, credentials: "include" });
   const json = await res.json();
   const closes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close || [];
   return closes.filter(c => c != null);
@@ -133,8 +146,10 @@ function technicals(closes) {
 
 // ---------- macro regime (FRED) + overlay ----------
 async function fredLatest(code) {
-  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${code}&cosd=2018-01-01`;
-  const res = await fetch(url, { headers: { "User-Agent": UA } });
+  // Only the most recent value is used — fetch a ~4-month window, not 8 years.
+  const start = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10);
+  const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=${code}&cosd=${start}`;
+  const res = await fetchWithTimeout(url, { headers: { "User-Agent": UA } }, 8000);
   const text = await res.text();
   let last = null;
   for (const line of text.trim().split("\n").slice(1)) {
@@ -143,7 +158,20 @@ async function fredLatest(code) {
   }
   return last;
 }
+
+// Macro is identical for every ticker and changes slowly — cache it for 6h
+// (mirrors the website's server-side macro cache) so most analyses skip FRED
+// entirely. Especially important because FRED outages are exactly what used
+// to hang the card for a minute-plus.
+const MACRO_CACHE_TTL = 6 * 60 * 60 * 1000;
+
 async function macroRegime() {
+  try {
+    const stored = await chrome.storage.local.get("mra_macro_cache");
+    const hit = stored && stored.mra_macro_cache;
+    if (hit && Date.now() - hit.at < MACRO_CACHE_TTL) return hit.data;
+  } catch (e) { /* storage unavailable — fall through to a live fetch */ }
+
   const [fed, curve, hy] = await Promise.all([
     fredLatest("FEDFUNDS").catch(() => null),
     fredLatest("T10Y2Y").catch(() => null),
@@ -158,7 +186,14 @@ async function macroRegime() {
   if (fed != null) parts.push(`Fed funds ${fed.toFixed(2)}%`);
   if (curve != null) parts.push(`10y-2y ${curve >= 0 ? "+" : ""}${curve.toFixed(2)}%${curve < 0 ? " (inverted)" : ""}`);
   if (hy != null) parts.push(`HY credit spread ${hy.toFixed(2)}%`);
-  return { fed, curve, hy, flags, label: parts.join("; ") || "Macro data unavailable" };
+  const data = { fed, curve, hy, flags, label: parts.join("; ") || "Macro data unavailable" };
+
+  // Cache only real data — a total FRED failure shouldn't be remembered for 6h.
+  if (fed != null || curve != null || hy != null) {
+    try { await chrome.storage.local.set({ mra_macro_cache: { at: Date.now(), data } }); }
+    catch (e) { /* best-effort */ }
+  }
+  return data;
 }
 const CYCLICAL = new Set(["Consumer Cyclical", "Financial Services", "Basic Materials", "Industrials", "Energy", "Real Estate"]);
 function macroOverlay(snap, balance, regime) {
