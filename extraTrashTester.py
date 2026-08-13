@@ -32,6 +32,8 @@ import requests
 import yfinance as yf
 from financedatabase import Equities
 
+import sec_fallback
+
 try:
     from pandas_datareader import data as pdr
 except Exception:
@@ -42,7 +44,7 @@ except Exception:
 # Helper utilities
 # ============================================================
 
-SEC_USER_AGENT = "stock-research-script/1.0 your-email@example.com"
+SEC_USER_AGENT = "stock-research-script/1.0 zachary.e.wong@gmail.com"
 
 
 def safe_call(func, default=None, label: str = ""):
@@ -104,9 +106,14 @@ _INFO_MIN_INTERVAL = 0.35
 _INFO_BREAKER = {"consecutive_failures": 0, "cooldown_until": 0.0}
 
 
-def get_cached_info(ticker: str) -> Dict[str, Any]:
+def get_cached_info(ticker: str, allow_sec_fallback: bool = False) -> Dict[str, Any]:
     """The one sanctioned way to read .info. Returns {} when Yahoo won't
-    cooperate — callers already treat missing fields as absent data."""
+    cooperate — callers already treat missing fields as absent data.
+
+    allow_sec_fallback=True additionally rebuilds the essential fields from
+    SEC EDGAR filings when Yahoo is rate-limited (see sec_fallback.py). Only
+    target tickers opt in: the ~20 peer lookups per assessment must stay cheap,
+    and a missing peer just drops out of the peer-median comparison."""
     ticker = ticker.upper().strip()
     now = time.time()
 
@@ -115,7 +122,7 @@ def get_cached_info(ticker: str) -> Dict[str, Any]:
         return hit[1]
 
     if now < _INFO_BREAKER["cooldown_until"]:
-        return {}
+        return _sec_fallback_info(ticker) if allow_sec_fallback else {}
 
     last_error = "empty/near-empty payload (silent throttle)"
     for attempt in range(3):
@@ -145,15 +152,60 @@ def get_cached_info(ticker: str) -> Dict[str, Any]:
     if _INFO_BREAKER["consecutive_failures"] >= 3:
         _INFO_BREAKER["cooldown_until"] = time.time() + 120
         print("[yahoo-info] quoteSummary appears throttled; failing fast for 2 minutes")
-    return {}
+    return _sec_fallback_info(ticker) if allow_sec_fallback else {}
+
+
+def _sec_fallback_info(ticker: str) -> Dict[str, Any]:
+    """Best-effort .info replacement built from SEC EDGAR filings, cached in
+    _INFO_CACHE exactly like a Yahoo hit so repeat reads are free. The price
+    (for market cap / P/E / the quote header) comes from Yahoo's chart
+    endpoint — a separate rate-limit budget from quoteSummary, and usually
+    still up when .info is throttled — with Stooq as a best-effort backstop."""
+    try:
+        cik = get_cik_for_ticker(ticker)
+        if not cik:
+            return {}
+
+        closes = pd.Series(dtype=float)
+        try:
+            hist = get_ticker(ticker).history(period="5d")
+            if isinstance(hist, pd.DataFrame) and "Close" in hist.columns:
+                closes = hist["Close"].dropna()
+        except Exception:
+            pass
+        if closes.empty:
+            stooq = sec_fallback.stooq_history(ticker, years=1)
+            if not stooq.empty:
+                closes = stooq["Close"].dropna()
+        # Round away float32 noise from the chart series (492.42999267578125)
+        # without flattening sub-cent penny-stock prices.
+        last_price = round(float(closes.iloc[-1]), 4) if len(closes) else None
+        prev_close = round(float(closes.iloc[-2]), 4) if len(closes) >= 2 else None
+
+        info = sec_fallback.build_info_from_edgar(
+            ticker, cik, last_price, prev_close, user_agent=SEC_USER_AGENT
+        )
+        if info:
+            _INFO_CACHE[ticker] = (time.time(), info)
+            print(
+                f"[sec-fallback] {ticker}: serving SEC EDGAR fundamentals "
+                f"(fiscal year ended {info.get('sec_data_asof', 'unknown')})"
+            )
+        return info
+    except Exception as exc:
+        print(f"[sec-fallback] {ticker}: fallback failed — {type(exc).__name__}: {exc}")
+        return {}
 
 
 def prime_ticker(ticker: str, attempts: int = 3, delay: float = 1.0) -> None:
     """Warm up the yfinance session for ``ticker`` before the real work starts.
     Never raises: if priming fails, per-source safe_call handling still
     produces a (partial) result. Delegates to get_cached_info, which owns
-    retry/backoff/caching for the .info endpoint."""
-    get_cached_info(ticker)
+    retry/backoff/caching for the .info endpoint. Priming only ever runs for
+    the assessment's TARGET ticker, so it opts into the SEC EDGAR fallback —
+    every later get_cached_info(ticker) then hits the cached result, Yahoo
+    or SEC alike."""
+    get_cached_info(ticker, allow_sec_fallback=True)
 
 
 def clean_number(value: Any) -> Optional[float]:
@@ -249,6 +301,13 @@ def make_json_safe(value: Any) -> Any:
             return []
         df = value.copy()
         df = df.reset_index()
+
+        # Column labels become the record keys below, and yfinance statements
+        # label columns with fiscal-period Timestamps — JSON keys must be str.
+        df.columns = [
+            c.isoformat() if isinstance(c, pd.Timestamp) else str(c)
+            for c in df.columns
+        ]
 
         # Convert timestamps and other objects safely
         for col in df.columns:
@@ -2322,9 +2381,23 @@ def humanize_notes(notes):
     return {k: [humanize_jargon(n) for n in (v or [])] for k, v in notes.items()}
 
 
-def build_metric_snapshot(assessment):
+def _target_snapshot(assessment):
+    """The target's .info snapshot for scoring/display. Normally it rides
+    along inside peer_relative_valuation, but that source's peer DISCOVERY
+    can throw independently of the target's own data — and it must not take
+    every fundamental metric down with it. Rebuilding from get_company_snapshot
+    is cache-backed, so this costs no extra network on an assessment that
+    already primed the ticker (Yahoo or SEC fallback alike)."""
     peer = assessment.get("peer_relative_valuation", {})
     snapshot = peer.get("target_snapshot", {}) if isinstance(peer, dict) else {}
+    if any(v is not None for v in snapshot.values()):
+        return snapshot
+    ticker = assessment.get("ticker")
+    return get_company_snapshot(ticker) if ticker else snapshot
+
+
+def build_metric_snapshot(assessment):
+    snapshot = _target_snapshot(assessment)
 
     balance = assessment.get("balance_sheet_risk", {})
     earnings = assessment.get("earnings_quality", {})
@@ -2513,7 +2586,7 @@ def generate_scored_summary(assessment):
     ticker = assessment.get("ticker", "UNKNOWN")
 
     peer = assessment.get("peer_relative_valuation", {})
-    snapshot = peer.get("target_snapshot", {}) if isinstance(peer, dict) else {}
+    snapshot = _target_snapshot(assessment)
     peer_medians = peer.get("peer_medians") if isinstance(peer, dict) else {}
 
     balance_score, balance_notes = score_balance_sheet(
@@ -2915,10 +2988,47 @@ def build_industry_kpi_view(assessment) -> Optional[Dict[str, Any]]:
     }
 
 
-def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
+# ------------------------------------------------------------
+# Serve-stale cache for finished analyses
+# ------------------------------------------------------------
+# When every live source is rate-limited at once, a clearly-labeled analysis
+# from a few hours ago is strictly better than an error page. Only full-Yahoo
+# results are cached (SEC-fallback results are already degraded — stacking
+# "stale" on top of "fallback" would compound staleness silently).
+_ASSESSMENT_CACHE: Dict[str, Any] = {}
+_ASSESSMENT_STALE_TTL = 24 * 60 * 60
+
+
+def _serve_stale_assessment(ticker: str) -> Optional[Dict[str, Any]]:
+    """A labeled deep copy of the last good analysis for ``ticker``, or None."""
+    stale = _ASSESSMENT_CACHE.get(ticker)
+    if not stale or time.time() - stale[0] >= _ASSESSMENT_STALE_TTL:
+        return None
+    cached = json.loads(json.dumps(stale[1]))  # deep copy; already JSON-safe
+    age_hours = (time.time() - stale[0]) / 3600
+    age_text = "less than an hour" if age_hours < 1 else f"about {int(round(age_hours))} hour{'s' if round(age_hours) >= 2 else ''}"
+    note = (
+        "Our live data sources are temporarily rate-limited, so this is our "
+        f"most recent full analysis from {age_text} ago. Scores and metrics "
+        "may not reflect today's trading."
+    )
+    cached["data_note"] = note
+    cached["stale"] = True
+    cached["interpretation"] = note + " " + cached.get("interpretation", "")
+    print(f"[serve-stale] {ticker}: returning cached analysis ({age_text} old)")
+    return cached
+
+
+def get_stock_assessment_for_html(
+    ticker: str,
+    include_full_assessment: bool = False,
+) -> Dict[str, Any]:
     """
     Runs the full stock assessment and returns the same information that
     print_concise_scored_summary() prints, but as a dictionary for HTML/API use.
+
+    include_full_assessment=True (CLI --full) attaches the raw assessment
+    sources under "full_assessment". The web app never sets it.
 
     macro/FRED data is skipped here: it is the single most expensive source
     (~30-70s, dominated by two daily FRED treasury series that read-time-out) and
@@ -2936,15 +3046,24 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
     ticker = ticker.upper().strip()
     probe = safe_call(lambda: get_ticker(ticker).history(period="5d"), label="existence_probe")
     if not isinstance(probe, pd.DataFrame) or probe.empty:
-        return {
-            "success": False,
-            "ticker": ticker,
-            "error": (
-                f"We couldn't find a stock with the ticker \"{ticker}\". "
-                "Double-check the symbol, or start typing in the search box "
-                "and pick from the suggestions."
-            ),
-        }
+        # Before declaring the ticker nonexistent, make sure it isn't Yahoo's
+        # chart endpoint being down: Stooq knowing the symbol proves it exists,
+        # and a recent successful analysis proves it even when Stooq is also
+        # unreachable (serve that stale copy rather than erroring).
+        probe = safe_call(lambda: sec_fallback.stooq_history(ticker, years=1), label="existence_probe_stooq")
+        if not isinstance(probe, pd.DataFrame) or probe.empty:
+            stale = _serve_stale_assessment(ticker)
+            if stale is not None:
+                return stale
+            return {
+                "success": False,
+                "ticker": ticker,
+                "error": (
+                    f"We couldn't find a stock with the ticker \"{ticker}\". "
+                    "Double-check the symbol, or start typing in the search box "
+                    "and pick from the suggestions."
+                ),
+            }
 
     # lean=True + the include flags skip every source the web output never
     # reads (news, technical, broad market, SEC, options, ownership, ...) —
@@ -2973,8 +3092,9 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
     investor_fit = build_investor_fit(summary)
 
     # Company display name for the UI (e.g. saved-analysis cards). The Ticker is
-    # already cached from the assessment run, so .info costs no extra network call.
-    info = get_cached_info(summary["ticker"])
+    # already cached from the assessment run, so .info costs no extra network call
+    # (the SEC-fallback flag matters only if the cache somehow expired mid-run).
+    info = get_cached_info(summary["ticker"], allow_sec_fallback=True)
     company_name = info.get("shortName") or info.get("longName") or ""
 
     # Data-sufficiency gate. Price history alone can exist for shell companies,
@@ -2995,7 +3115,12 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
             # get_cached_info returned nothing at all — that's OUR fetch
             # failing (throttle/outage), which says nothing about the company.
             # SK hynix ($1T market cap) once got the shell-company message
-            # because of this exact ambiguity. Own the failure instead.
+            # because of this exact ambiguity. Own the failure instead —
+            # after first trying to serve the last good analysis, clearly
+            # labeled as stale, which beats an error page.
+            stale = _serve_stale_assessment(summary["ticker"])
+            if stale is not None:
+                return stale
             return {
                 "success": False,
                 "ticker": summary["ticker"],
@@ -3042,7 +3167,7 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
             "time": info.get("regularMarketTime"),
         }
 
-    return make_json_safe({
+    result = make_json_safe({
         "success": True,
         "ticker": summary["ticker"],
         "company_name": company_name,
@@ -3070,6 +3195,31 @@ def get_stock_assessment_for_html(ticker: str) -> Dict[str, Any]:
             "earnings quality, competitive position, or market risk."
         )
     })
+
+    if info.get("_source") == "sec_edgar":
+        # Be upfront that this analysis ran in fallback mode: annual-report
+        # fundamentals instead of Yahoo's TTM figures, and some market-based
+        # extras missing entirely.
+        asof = info.get("sec_data_asof", "the last annual report")
+        note = (
+            "Live market data is temporarily rate-limited, so fundamentals come "
+            f"straight from this company's SEC filings (fiscal year ended {asof}). "
+            "Some market-based metrics (forward P/E, beta, peer comparison, "
+            "governance) may be unavailable in this view."
+        )
+        result["data_note"] = note
+        result["interpretation"] = note + " " + result["interpretation"]
+    else:
+        # Only full-Yahoo analyses feed the serve-stale cache; see the cache
+        # comment above for why fallback-mode results are excluded.
+        _ASSESSMENT_CACHE[summary["ticker"]] = (time.time(), result)
+
+    # Attached after the cache store on purpose: the raw sources are large and
+    # only the CLI's --full flag ever asks for them.
+    if include_full_assessment:
+        result["full_assessment"] = make_json_safe(assessment)
+
+    return result
 
 if __name__ == "__main__":
     import argparse
