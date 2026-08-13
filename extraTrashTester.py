@@ -155,41 +155,114 @@ def get_cached_info(ticker: str, allow_sec_fallback: bool = False) -> Dict[str, 
     return _sec_fallback_info(ticker) if allow_sec_fallback else {}
 
 
+# SPY closes for fallback-mode beta (identical for every ticker; cache 6h).
+_SPY_CLOSES_CACHE: Dict[str, Any] = {"at": 0.0, "closes": None}
+_SPY_CLOSES_TTL = 6 * 60 * 60
+
+
+def _market_closes_for_beta() -> pd.Series:
+    if time.time() - _SPY_CLOSES_CACHE["at"] < _SPY_CLOSES_TTL and _SPY_CLOSES_CACHE["closes"] is not None:
+        return _SPY_CLOSES_CACHE["closes"]
+    closes = pd.Series(dtype=float)
+    try:
+        hist = yf.Ticker("SPY").history(period="2y")
+        if isinstance(hist, pd.DataFrame) and "Close" in hist.columns:
+            closes = hist["Close"].dropna()
+    except Exception:
+        pass
+    if closes.empty:
+        stooq = sec_fallback.stooq_history("SPY", years=2)
+        if not stooq.empty:
+            closes = stooq["Close"].dropna()
+    if not closes.empty:
+        _SPY_CLOSES_CACHE["at"] = time.time()
+        _SPY_CLOSES_CACHE["closes"] = closes
+    return closes
+
+
+def _beta_from_closes(closes: pd.Series) -> Optional[float]:
+    """Beta the textbook way: covariance of daily returns with the market over
+    the market's variance, ~2 years of overlap. Restores the field Yahoo's
+    quoteSummary normally provides — the macro overlay's high-beta recession
+    check is dead without it."""
+    market = _market_closes_for_beta()
+    if closes.empty or market.empty:
+        return None
+    # Normalize both to naive dates so yfinance (tz-aware) and Stooq (naive)
+    # series align instead of silently producing an empty join.
+    stock = closes.copy()
+    stock.index = pd.DatetimeIndex(stock.index).tz_localize(None).normalize()
+    mkt = market.copy()
+    mkt.index = pd.DatetimeIndex(mkt.index).tz_localize(None).normalize()
+    joined = pd.concat([stock, mkt], axis=1, join="inner", keys=["s", "m"]).dropna()
+    if len(joined) < 120:  # ~6 months minimum for a meaningful estimate
+        return None
+    rets = joined.pct_change().dropna()
+    var = rets["m"].var()
+    if not var:
+        return None
+    return round(float(rets["s"].cov(rets["m"]) / var), 3)
+
+
 def _sec_fallback_info(ticker: str) -> Dict[str, Any]:
     """Best-effort .info replacement built from SEC EDGAR filings, cached in
-    _INFO_CACHE exactly like a Yahoo hit so repeat reads are free. The price
-    (for market cap / P/E / the quote header) comes from Yahoo's chart
-    endpoint — a separate rate-limit budget from quoteSummary, and usually
-    still up when .info is throttled — with Stooq as a best-effort backstop."""
+    _INFO_CACHE exactly like a Yahoo hit so repeat reads are free. Market-side
+    fields Yahoo normally supplies are recomputed from the chart endpoint (a
+    separate rate-limit budget from quoteSummary, usually still up): price and
+    quote timestamp from the close series, beta regressed against SPY, and
+    dividend yield summed from actual dividend events. Stooq is the price
+    backstop (no dividend events there, so the filings-based yield stands)."""
     try:
         cik = get_cik_for_ticker(ticker)
         if not cik:
             return {}
 
         closes = pd.Series(dtype=float)
+        dividends = None
+        market_time = None
         try:
-            hist = get_ticker(ticker).history(period="5d")
+            hist = get_ticker(ticker).history(period="2y")
             if isinstance(hist, pd.DataFrame) and "Close" in hist.columns:
                 closes = hist["Close"].dropna()
+                if "Dividends" in hist.columns:
+                    dividends = hist["Dividends"]
         except Exception:
             pass
         if closes.empty:
-            stooq = sec_fallback.stooq_history(ticker, years=1)
+            stooq = sec_fallback.stooq_history(ticker, years=2)
             if not stooq.empty:
                 closes = stooq["Close"].dropna()
         # Round away float32 noise from the chart series (492.42999267578125)
         # without flattening sub-cent penny-stock prices.
         last_price = round(float(closes.iloc[-1]), 4) if len(closes) else None
         prev_close = round(float(closes.iloc[-2]), 4) if len(closes) >= 2 else None
+        if len(closes):
+            try:
+                market_time = int(pd.Timestamp(closes.index[-1]).timestamp())
+            except Exception:
+                pass
 
         info = sec_fallback.build_info_from_edgar(
             ticker, cik, last_price, prev_close, user_agent=SEC_USER_AGENT
         )
         if info:
+            beta = _beta_from_closes(closes)
+            if beta is not None:
+                info["beta"] = beta
+            # Trailing yield from real dividend events beats the filings-based
+            # estimate build_info_from_edgar may have left in place.
+            if dividends is not None and last_price:
+                cutoff = dividends.index[-1] - pd.Timedelta(days=365)
+                paid = float(dividends[dividends.index > cutoff].sum())
+                if paid > 0:
+                    info["trailingAnnualDividendRate"] = round(paid, 4)
+                    info["dividendYield"] = round(paid / last_price, 6)
+            if market_time is not None:
+                info["regularMarketTime"] = market_time
             _INFO_CACHE[ticker] = (time.time(), info)
             print(
                 f"[sec-fallback] {ticker}: serving SEC EDGAR fundamentals "
-                f"(fiscal year ended {info.get('sec_data_asof', 'unknown')})"
+                f"(data through {info.get('sec_data_asof', 'unknown')})"
             )
         return info
     except Exception as exc:
@@ -1012,6 +1085,14 @@ def get_company_snapshot(ticker: str) -> Dict[str, Any]:
     }
 
 
+# Last-known peer medians per target ticker. Peer snapshots are ~20 .info
+# calls, so they're the first casualty of a Yahoo throttle — but industry
+# medians drift slowly, so reusing week-old ones keeps peer-relative valuation
+# alive in fallback mode instead of silently collapsing to absolute-only rules.
+_PEER_MEDIAN_CACHE: Dict[str, Any] = {}
+_PEER_MEDIAN_TTL = 7 * 24 * 60 * 60
+
+
 def retrieve_peer_relative_valuation(
     ticker: str,
     max_peers: int = 10
@@ -1071,11 +1152,31 @@ def retrieve_peer_relative_valuation(
     else:
         peer_medians = pd.Series(dtype=float)
 
+    peer_medians_cached = False
+    medians_clean = {
+        k: clean_number(v)
+        for k, v in dict(peer_medians).items()
+        if clean_number(v) is not None
+    }
+    if peer_tickers and medians_clean:
+        _PEER_MEDIAN_CACHE[ticker.upper()] = (time.time(), medians_clean, list(peer_tickers))
+    elif not peer_tickers:
+        # Peer fetches all failed (Yahoo throttle). Both downstream consumers
+        # (score_valuation, build_peer_comparison) read medians via .get(), so
+        # a cached plain dict substitutes for the pandas Series cleanly.
+        hit = _PEER_MEDIAN_CACHE.get(ticker.upper())
+        if hit and time.time() - hit[0] < _PEER_MEDIAN_TTL:
+            peer_medians = hit[1]
+            peer_tickers = list(hit[2])
+            peer_medians_cached = True
+            print(f"[peer-cache] {ticker}: reusing last-known peer medians ({len(peer_tickers)} peers)")
+
     return {
         "target_snapshot": snapshots[ticker.upper()],
         "peer_tickers_used": peer_tickers,
         "comparison_table": comparison,
         "peer_medians": peer_medians,
+        "peer_medians_cached": peer_medians_cached,
     }
 
 
@@ -1147,6 +1248,18 @@ def analyze_earnings_quality(ticker: str) -> Dict[str, Any]:
     fcf = ttm_value(q_cashflow, cashflow, "Free Cash Flow")
     receivables = mrq_value(q_balance, balance, "Accounts Receivable")
     inventory = mrq_value(q_balance, balance, "Inventory")
+
+    # Statements ride a different Yahoo endpoint than .info and usually survive
+    # a quoteSummary throttle — but in a full blackout they die too, and the
+    # SEC fallback has already parked TTM revenue/income/cash-flow figures in
+    # the cached info dict. Use them, so Earnings Quality degrades to real
+    # EDGAR data instead of a data-free neutral score.
+    if None in (revenue, net_income, ocf, fcf):
+        info = get_cached_info(ticker)
+        revenue = revenue if revenue is not None else clean_number(info.get("totalRevenue"))
+        net_income = net_income if net_income is not None else clean_number(info.get("netIncomeToCommon"))
+        ocf = ocf if ocf is not None else clean_number(info.get("operatingCashflow"))
+        fcf = fcf if fcf is not None else clean_number(info.get("freeCashflow"))
 
     return {
         "revenue_latest": revenue,
@@ -2333,6 +2446,8 @@ METRIC_GLOSSARY = {
     "Max Drawdown": "The worst peak-to-trough price drop over the period.",
     "Current RSI": "Relative Strength Index (0-100): above ~70 looks overbought, below ~30 oversold.",
     "Current Drawdown": "How far the price currently sits below its recent peak.",
+    "Beta": "How much the stock moves relative to the market; above 1 is more volatile than the market.",
+    "Dividend Yield": "Yearly dividends as a share of the stock price; 0% means it doesn't pay one.",
     "Buybacks (TTM)": "Cash spent repurchasing its own shares over the last 12 months — shrinks the share count, boosting each remaining share's claim.",
     "Dividends Paid (TTM)": "Cash paid out to shareholders over the last 12 months.",
     "Capital Expenditure (TTM)": "Cash reinvested in the business (equipment, facilities, technology) over the last 12 months.",
@@ -2433,6 +2548,8 @@ def build_metric_snapshot(assessment):
         "Max Drawdown": pct(historical.get("max_drawdown") if isinstance(historical, dict) else None),
         "Current RSI": num(edge.get("current_RSI") if isinstance(edge, dict) else None),
         "Current Drawdown": pct(edge.get("current_drawdown") if isinstance(edge, dict) else None),
+        "Beta": num(snapshot.get("beta")),
+        "Dividend Yield": pct(snapshot.get("dividendYield")),
         "Analyst Mean Target": money(price_targets.get("targetMeanPrice") if isinstance(price_targets, dict) else None),
         "Analyst Rating": price_targets.get("recommendationKey") if isinstance(price_targets, dict) else "N/A",
     }

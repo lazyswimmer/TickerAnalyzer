@@ -55,20 +55,22 @@ def _parse_date(s: Optional[str]) -> Optional[datetime]:
 
 def _tag_entry_lists(facts: Dict[str, Any], tags: List[str]) -> List[List[Dict[str, Any]]]:
     """Entry lists for EVERY candidate tag that exists (us-gaap then ifrs-full,
-    USD units preferred). All candidates matter: companies switch XBRL tags
+    USD units ONLY). All candidates matter: companies switch XBRL tags
     over the years, and a tag can hold nothing but stale history — NVDA's
     revenue lived under a tag that went dead in FY2022, so 'first tag that
-    exists' quietly served four-year-old numbers."""
+    exists' quietly served four-year-old numbers.
+
+    USD-only is deliberate, not a preference: a 20-F filer reporting in euros
+    would otherwise get EUR fundamentals divided into a USD market cap — a
+    silently WRONG ratio, which is worse than a missing one. Foreign filers
+    without USD facts simply get no fallback."""
     lists = []
     for taxonomy in ("us-gaap", "ifrs-full"):
         tax = facts.get(taxonomy) or {}
         for tag in tags:
-            units = (tax.get(tag) or {}).get("units") or {}
-            for unit_name in ("USD", *sorted(units)):
-                entries = units.get(unit_name)
-                if entries:
-                    lists.append(entries)
-                    break
+            entries = ((tax.get(tag) or {}).get("units") or {}).get("USD")
+            if entries:
+                lists.append(entries)
     return lists
 
 
@@ -119,6 +121,88 @@ def _annual_at(
             if best is None or gap < best[0] or (gap == best[0] and filed > best[1]):
                 best = (gap, filed, float(e["val"]))
     return best[2] if best else None
+
+
+# Discrete quarters (10-Q flow facts) run ~90 days.
+_QUARTER_MIN_DAYS = 75
+_QUARTER_MAX_DAYS = 105
+
+
+def _quarters_by_end(facts: Dict[str, Any], tags: List[str]) -> Dict[str, Dict[str, Any]]:
+    """period-end -> most-recently-filed discrete-quarter entry, merged across
+    all candidate tags (same dedupe rule as _annual_by_end)."""
+    quarters: Dict[str, Dict[str, Any]] = {}
+    for entries in _tag_entry_lists(facts, tags):
+        for e in entries:
+            start, end = _parse_date(e.get("start")), _parse_date(e.get("end"))
+            if not start or not end or e.get("val") is None:
+                continue
+            if not (_QUARTER_MIN_DAYS <= (end - start).days <= _QUARTER_MAX_DAYS):
+                continue
+            key = e["end"]
+            if key not in quarters or (e.get("filed") or "") > (quarters[key].get("filed") or ""):
+                quarters[key] = e
+    return quarters
+
+
+def _ttm_at(facts: Dict[str, Any], tags: List[str], fy_end: Optional[str]) -> Tuple[Optional[float], Optional[str]]:
+    """(trailing-twelve-month value, as-of period end) for a flow concept.
+
+    Companies file discrete quarters only for Q1-Q3 (the 10-K subsumes Q4), so
+    naive last-4-quarters summing rarely works. The standard construction:
+
+        TTM = anchored FY + quarters reported AFTER the FY end
+                          - the matching quarters one year earlier
+
+    Falls back to the plain FY value whenever a stub quarter lacks its
+    prior-year counterpart: stale-but-correct beats fresh-but-wrong."""
+    base = _annual_at(facts, tags, fy_end)
+    if base is None or fy_end is None:
+        return None, fy_end
+    fy_dt = _parse_date(fy_end)
+    quarters = _quarters_by_end(facts, tags)
+    stubs = [
+        q for q in quarters.values()
+        if (_parse_date(q["start"]) - fy_dt).days >= -5
+    ]
+    if not stubs:
+        return base, fy_end
+
+    stub_sum, prior_sum = 0.0, 0.0
+    latest_covered = fy_end
+    for stub in sorted(stubs, key=lambda q: q["end"]):
+        stub_end = _parse_date(stub["end"])
+        counterpart = next(
+            (
+                q for q in quarters.values()
+                if 330 <= (stub_end - _parse_date(q["end"])).days <= 430
+            ),
+            None,
+        )
+        if counterpart is None:
+            return base, fy_end
+        stub_sum += float(stub["val"])
+        prior_sum += float(counterpart["val"])
+        latest_covered = max(latest_covered, stub["end"])
+    return base + stub_sum - prior_sum, latest_covered
+
+
+def _quarterly_yoy(facts: Dict[str, Any], tags: List[str]) -> Optional[float]:
+    """Latest discrete quarter vs. the same quarter one year earlier — a far
+    fresher growth signal than fiscal-year-over-fiscal-year (Yahoo's
+    revenueGrowth/earningsGrowth are quarterly YoY too, so this also keeps
+    fallback growth comparable with normal-mode growth)."""
+    quarters = _quarters_by_end(facts, tags)
+    if len(quarters) < 2:
+        return None
+    ends = sorted(quarters, reverse=True)
+    latest_val = float(quarters[ends[0]]["val"])
+    latest_end = _parse_date(ends[0])
+    for end in ends[1:]:
+        if 330 <= (latest_end - _parse_date(end)).days <= 430:
+            prior = float(quarters[end]["val"])
+            return (latest_val - prior) / abs(prior) if prior != 0 else None
+    return None
 
 
 def _latest_instant(facts: Dict[str, Any], tags: List[str]) -> Optional[float]:
@@ -218,30 +302,50 @@ def build_info_from_edgar(
     ]
 
     # Anchor everything to the newest fiscal year filed under ANY revenue or
-    # net-income tag, then require each flow metric to match that period.
+    # net-income tag, then extend each flow to trailing-twelve-months where the
+    # stub quarters net out cleanly (_ttm_at falls back to the anchored FY
+    # value when they don't, so metrics can mix TTM and FY — approximately
+    # right beats precisely stale).
     fy_end = _latest_fiscal_year_end(facts, REVENUE_TAGS + NET_INCOME_TAGS)
 
-    revenue = _annual_at(facts, REVENUE_TAGS, fy_end)
-    revenue_prior = _annual_at(facts, REVENUE_TAGS, fy_end, offset_days=365)
-    net_income = _annual_at(facts, NET_INCOME_TAGS, fy_end)
-    net_income_prior = _annual_at(facts, NET_INCOME_TAGS, fy_end, offset_days=365)
-    operating_income = _annual_at(facts, [
+    revenue, rev_asof = _ttm_at(facts, REVENUE_TAGS, fy_end)
+    net_income, ni_asof = _ttm_at(facts, NET_INCOME_TAGS, fy_end)
+    operating_income, _ = _ttm_at(facts, [
         "OperatingIncomeLoss", "ProfitLossFromOperatingActivities",
     ], fy_end)
-    gross_profit = _annual_at(facts, ["GrossProfit"], fy_end)
-    dep_amort = _annual_at(facts, [
+    gross_profit, _ = _ttm_at(facts, ["GrossProfit"], fy_end)
+    dep_amort, _ = _ttm_at(facts, [
         "DepreciationDepletionAndAmortization", "DepreciationAndAmortization",
         "DepreciationAmortizationAndOther", "DepreciationAmortizationAndAccretionNet",
         "DepreciationAmortisationAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss",
     ], fy_end)
-    ocf = _annual_at(facts, [
+    ocf, _ = _ttm_at(facts, [
         "NetCashProvidedByUsedInOperatingActivities",
         "CashFlowsFromUsedInOperatingActivities",
     ], fy_end)
-    capex = _annual_at(facts, [
+    capex, _ = _ttm_at(facts, [
         "PaymentsToAcquirePropertyPlantAndEquipment",
         "PurchaseOfPropertyPlantAndEquipment",
     ], fy_end)
+    dividends_paid, _ = _ttm_at(facts, [
+        "PaymentsOfDividends", "PaymentsOfDividendsCommonStock",
+        "PaymentsOfOrdinaryDividends", "DividendsPaid",
+    ], fy_end)
+
+    # Growth: quarterly YoY when discrete quarters exist (fresher, and matches
+    # how Yahoo defines revenueGrowth/earningsGrowth); FY-over-FY otherwise.
+    revenue_growth = _quarterly_yoy(facts, REVENUE_TAGS)
+    if revenue_growth is None:
+        revenue_growth = _growth(
+            _annual_at(facts, REVENUE_TAGS, fy_end),
+            _annual_at(facts, REVENUE_TAGS, fy_end, offset_days=365),
+        )
+    earnings_growth = _quarterly_yoy(facts, NET_INCOME_TAGS)
+    if earnings_growth is None:
+        earnings_growth = _growth(
+            _annual_at(facts, NET_INCOME_TAGS, fy_end),
+            _annual_at(facts, NET_INCOME_TAGS, fy_end, offset_days=365),
+        )
 
     equity = _latest_instant(facts, [
         "StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
@@ -255,6 +359,7 @@ def build_info_from_edgar(
     total_assets = _latest_instant(facts, ["Assets"])
     current_assets = _latest_instant(facts, ["AssetsCurrent", "CurrentAssets"])
     current_liabilities = _latest_instant(facts, ["LiabilitiesCurrent", "CurrentLiabilities"])
+    inventory = _latest_instant(facts, ["InventoryNet", "Inventories"])
 
     lt_debt = _latest_instant(facts, ["LongTermDebtNoncurrent", "LongTermDebt", "NoncurrentPortionOfNoncurrentBorrowings"])
     st_debt = _latest_instant(facts, ["LongTermDebtCurrent", "DebtCurrent", "ShortTermBorrowings", "CurrentPortionOfLongtermBorrowings"])
@@ -280,7 +385,7 @@ def build_info_from_edgar(
 
     info: Dict[str, Any] = {
         "_source": "sec_edgar",
-        "sec_data_asof": fy_end,
+        "sec_data_asof": max(filter(None, [fy_end, rev_asof, ni_asof]), default=fy_end),
         "shortName": name,
         "longName": name,
         "sector": _sector_from_sic(subs.get("sic")),
@@ -309,11 +414,28 @@ def build_info_from_edgar(
         "grossMargins": _ratio(gross_profit, revenue),
         "returnOnEquity": _ratio(net_income, equity),
         "returnOnAssets": _ratio(net_income, total_assets),
-        "revenueGrowth": _growth(revenue, revenue_prior),
-        "earningsGrowth": _growth(net_income, net_income_prior),
+        "revenueGrowth": revenue_growth,
+        "earningsGrowth": earnings_growth,
         "currentRatio": _ratio(current_assets, current_liabilities),
+        # Quick ratio: (current assets - inventory) / current liabilities. A
+        # missing inventory tag is treated as zero inventory — true for most
+        # service/software filers, and matches how the ratio degenerates to
+        # the current ratio for inventory-less companies anyway.
+        "quickRatio": _ratio(
+            current_assets - (inventory or 0) if current_assets is not None else None,
+            current_liabilities,
+        ),
         "debtToEquity": (
             total_debt / equity * 100 if total_debt is not None and equity not in (None, 0) else None
+        ),
+        # XBRL dividend payments are reported as positive outflows. The
+        # chart-derived per-share yield (computed by the caller from actual
+        # dividend events) overrides this cruder filings-based estimate.
+        "dividendYield": _ratio(dividends_paid, market_cap),
+        "payoutRatio": (
+            dividends_paid / net_income
+            if dividends_paid is not None and net_income is not None and net_income > 0
+            else None
         ),
     }
     return {k: v for k, v in info.items() if v is not None}
