@@ -219,7 +219,6 @@ def _sec_fallback_info(ticker: str) -> Dict[str, Any]:
 
         closes = pd.Series(dtype=float)
         dividends = None
-        market_time = None
         try:
             hist = get_ticker(ticker).history(period="2y")
             if isinstance(hist, pd.DataFrame) and "Close" in hist.columns:
@@ -233,14 +232,12 @@ def _sec_fallback_info(ticker: str) -> Dict[str, Any]:
             if not stooq.empty:
                 closes = stooq["Close"].dropna()
         # Round away float32 noise from the chart series (492.42999267578125)
-        # without flattening sub-cent penny-stock prices.
+        # without flattening sub-cent penny-stock prices. Deliberately NO
+        # regularMarketTime here: daily bars are stamped midnight-ET, which the
+        # card renders as a bogus "as of 11:00 PM" — the displayed quote gets
+        # its real trade timestamp from get_fresh_quote instead.
         last_price = round(float(closes.iloc[-1]), 4) if len(closes) else None
         prev_close = round(float(closes.iloc[-2]), 4) if len(closes) >= 2 else None
-        if len(closes):
-            try:
-                market_time = int(pd.Timestamp(closes.index[-1]).timestamp())
-            except Exception:
-                pass
 
         info = sec_fallback.build_info_from_edgar(
             ticker, cik, last_price, prev_close, user_agent=SEC_USER_AGENT
@@ -257,8 +254,6 @@ def _sec_fallback_info(ticker: str) -> Dict[str, Any]:
                 if paid > 0:
                     info["trailingAnnualDividendRate"] = round(paid, 4)
                     info["dividendYield"] = round(paid / last_price, 6)
-            if market_time is not None:
-                info["regularMarketTime"] = market_time
             _INFO_CACHE[ticker] = (time.time(), info)
             print(
                 f"[sec-fallback] {ticker}: serving SEC EDGAR fundamentals "
@@ -268,6 +263,48 @@ def _sec_fallback_info(ticker: str) -> Dict[str, Any]:
     except Exception as exc:
         print(f"[sec-fallback] {ticker}: fallback failed — {type(exc).__name__}: {exc}")
         return {}
+
+
+# Fresh-quote cache: quotes are deliberately decoupled from the 1-hour info
+# cache — fundamentals don't move in an hour, prices do. A ~2-minute TTL
+# absorbs visitor bursts while keeping the card's price current. Rides the
+# chart endpoint (separate rate-limit budget from quoteSummary), so it works
+# in fallback mode too, with the TRUE last-trade timestamp instead of the
+# midnight bar-date that used to render as "as of 11:00 PM".
+_QUOTE_CACHE: Dict[str, Any] = {}
+_QUOTE_TTL = 120
+
+
+def get_fresh_quote(ticker: str) -> Optional[Dict[str, Any]]:
+    """Delayed-but-current quote from the chart endpoint's metadata, or None
+    when even the chart endpoint won't answer."""
+    ticker = ticker.upper().strip()
+    now = time.time()
+    hit = _QUOTE_CACHE.get(ticker)
+    if hit is not None and now - hit[0] < _QUOTE_TTL:
+        return hit[1]
+    try:
+        stock = get_ticker(ticker)
+        stock.history(period="1d")  # primes the chart metadata below
+        meta = stock.history_metadata or {}
+        price = clean_number(meta.get("regularMarketPrice"))
+        if price is None:
+            return None
+        previous = clean_number(
+            meta.get("previousClose")
+            or meta.get("regularMarketPreviousClose")
+            or meta.get("chartPreviousClose")
+        )
+        quote = {
+            "price": round(price, 4),
+            "change_pct": (price - previous) / previous if previous else None,
+            "currency": meta.get("currency") or "USD",
+            "time": meta.get("regularMarketTime"),
+        }
+        _QUOTE_CACHE[ticker] = (now, quote)
+        return quote
+    except Exception:
+        return None
 
 
 def prime_ticker(ticker: str, attempts: int = 3, delay: float = 1.0) -> None:
@@ -3132,6 +3169,13 @@ def _serve_stale_assessment(ticker: str) -> Optional[Dict[str, Any]]:
     cached["data_note"] = note
     cached["stale"] = True
     cached["interpretation"] = note + " " + cached.get("interpretation", "")
+    # The analysis is stale but the price needn't be: the chart endpoint often
+    # survives whatever took the other sources down. Best-effort overlay only —
+    # a frozen quote (up to 24h old) was the previous behavior and still stands
+    # when even the chart endpoint won't answer.
+    fresh = get_fresh_quote(ticker)
+    if fresh is not None:
+        cached["quote"] = fresh
     print(f"[serve-stale] {ticker}: returning cached analysis ({age_text} old)")
     return cached
 
@@ -3265,24 +3309,29 @@ def get_stock_assessment_for_html(
     # already fetched (zero extra network cost). Yahoo's quote data is
     # exchange-delayed and our cache adds up to an hour — the UI labels it as
     # delayed with a timestamp; deliberately NOT a live-updating price.
-    current_price = clean_number(
-        info.get("currentPrice") or info.get("regularMarketPrice")
-    )
-    previous_close = clean_number(
-        info.get("regularMarketPreviousClose") or info.get("previousClose")
-    )
-    quote = None
-    if current_price is not None:
-        quote = {
-            "price": current_price,
-            "change_pct": (
-                (current_price - previous_close) / previous_close
-                if previous_close
-                else None
-            ),
-            "currency": info.get("currency") or "USD",
-            "time": info.get("regularMarketTime"),
-        }
+    # Fresh quote first (chart metadata, ~2min cache, real trade timestamp) —
+    # prices move within the hour even when the cached fundamentals don't.
+    # The info-based quote is the last resort, e.g. when the chart endpoint
+    # itself is down but cached .info still carries a price.
+    quote = get_fresh_quote(summary["ticker"])
+    if quote is None:
+        current_price = clean_number(
+            info.get("currentPrice") or info.get("regularMarketPrice")
+        )
+        previous_close = clean_number(
+            info.get("regularMarketPreviousClose") or info.get("previousClose")
+        )
+        if current_price is not None:
+            quote = {
+                "price": current_price,
+                "change_pct": (
+                    (current_price - previous_close) / previous_close
+                    if previous_close
+                    else None
+                ),
+                "currency": info.get("currency") or "USD",
+                "time": info.get("regularMarketTime"),
+            }
 
     result = make_json_safe({
         "success": True,

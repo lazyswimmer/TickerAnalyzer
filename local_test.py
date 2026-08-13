@@ -67,6 +67,13 @@ check(
     snap.get("Beta") not in (None, "N/A"),
     f"beta {snap.get('Beta')}",
 )
+quote = d.get("quote") or {}
+quote_age_days = (time.time() - quote["time"]) / 86400 if quote.get("time") else 999
+check(
+    "fallback quote has real trade time",
+    quote.get("price") is not None and quote_age_days < 7,
+    f"price {quote.get('price')} | trade time {quote_age_days*24:.1f}h ago",
+)
 
 print("\n3. Peer-median cache (SEC-fallback MSFT reuses medians from test 1) ...")
 ett._INFO_CACHE.pop("MSFT", None)
@@ -92,6 +99,13 @@ check(
     "serve-stale analysis",
     r.status_code == 200 and d.get("success") and d.get("stale") is True,
     f"stale={d.get('stale')} | quality {d.get('overall_quality_score')}",
+)
+quote = d.get("quote") or {}
+quote_age_days = (time.time() - quote["time"]) / 86400 if quote.get("time") else 999
+check(
+    "stale card still gets fresh price",
+    quote.get("price") is not None and quote_age_days < 7,
+    f"price {quote.get('price')} | trade time {quote_age_days*24:.1f}h ago",
 )
 sec_fallback.build_info_from_edgar = _real_edgar
 heal_yahoo()
