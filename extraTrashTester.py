@@ -117,6 +117,7 @@ def get_cached_info(ticker: str) -> Dict[str, Any]:
     if now < _INFO_BREAKER["cooldown_until"]:
         return {}
 
+    last_error = "empty/near-empty payload (silent throttle)"
     for attempt in range(3):
         pause = _INFO_PACING["last_fetch"] + _INFO_MIN_INTERVAL - time.time()
         if pause > 0:
@@ -130,13 +131,16 @@ def get_cached_info(ticker: str) -> Dict[str, Any]:
                 _INFO_CACHE[ticker] = (time.time(), info)
                 _INFO_BREAKER["consecutive_failures"] = 0
                 return info
-        except Exception:
-            pass
+        except Exception as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
         # Drop the possibly-poisoned Ticker so a retry redoes the handshake.
         _TICKER_CACHE.pop(ticker, None)
         if attempt < 2:
             time.sleep(1.0 * (attempt + 1))
 
+    # One line per failed ticker so the deploy logs show WHAT Yahoo said
+    # (429 throttle vs crumb/401 hard block), not just that it failed.
+    print(f"[yahoo-info] {ticker}: all attempts failed — {last_error}")
     _INFO_BREAKER["consecutive_failures"] += 1
     if _INFO_BREAKER["consecutive_failures"] >= 3:
         _INFO_BREAKER["cooldown_until"] = time.time() + 120

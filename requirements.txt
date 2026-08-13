@@ -4,7 +4,12 @@ flask
 numpy
 pandas
 requests
-yfinance
+# Pinned: 0.2.54+ impersonates a real Chrome TLS fingerprint via curl_cffi,
+# which is what gets .info past Yahoo's datacenter-IP bot blocking. An
+# unpinned build from an old cache ships an easily-fingerprinted client and
+# every analysis dies with "data source appears to be temporarily limited".
+yfinance>=0.2.65
+curl_cffi
 financedatabase
 # FRED macro data (macro regime / macro context). Without this the deployed
 # server silently runs with no macro overlay — it is NOT optional in production.
