@@ -275,6 +275,25 @@ _QUOTE_CACHE: Dict[str, Any] = {}
 _QUOTE_TTL = 120
 
 
+def _epoch_seconds(value: Any) -> Optional[int]:
+    """Normalize a timestamp to epoch seconds. yfinance's history_metadata
+    returns regularMarketTime as a raw epoch int in some versions and a
+    datetime/Timestamp in others — the deployed box and the dev box can
+    disagree, and a serialized datetime string reaches the card's JS as
+    "Invalid Date"."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return int(value) if value > 0 else None
+    try:
+        ts = pd.Timestamp(value)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        return int(ts.timestamp())
+    except Exception:
+        return None
+
+
 def get_fresh_quote(ticker: str) -> Optional[Dict[str, Any]]:
     """Delayed-but-current quote from the chart endpoint's metadata, or None
     when even the chart endpoint won't answer."""
@@ -299,7 +318,7 @@ def get_fresh_quote(ticker: str) -> Optional[Dict[str, Any]]:
             "price": round(price, 4),
             "change_pct": (price - previous) / previous if previous else None,
             "currency": meta.get("currency") or "USD",
-            "time": meta.get("regularMarketTime"),
+            "time": _epoch_seconds(meta.get("regularMarketTime")),
         }
         _QUOTE_CACHE[ticker] = (now, quote)
         return quote
@@ -2458,7 +2477,11 @@ def score_governance(governance):
     elif avg_risk <= 3:
         notes.append("Governance risk appears relatively low.")
 
-    return clamp(score), notes
+    # Round away float noise: 11 - 9.8 = 1.1999999999999993, which the card
+    # would otherwise display verbatim. Whole values come back as ints so the
+    # card shows "5/10" like every other category, not "5.0/10".
+    score = round(clamp(score), 1)
+    return (int(score) if score == int(score) else score), notes
 
 
 # Plain-English meaning for each metric label, shown beside the number so the

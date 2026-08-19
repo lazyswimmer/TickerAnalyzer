@@ -262,7 +262,8 @@ function scoreGovernance(g) {
   const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
   const notes = [`Average available governance risk score is ${avg.toFixed(1)}/10.`];
   if (avg >= 7) notes.push("Governance risk appears elevated."); else if (avg <= 3) notes.push("Governance risk appears relatively low.");
-  return [clamp(11 - avg), notes];
+  // r1 rounds away float noise (11 - 9.8 = 1.1999999999999993 otherwise).
+  return [r1(clamp(11 - avg)), notes];
 }
 
 // ---------- assemble (mirrors generate_scored_summary + build_*) ----------
